@@ -26,3 +26,5 @@ Thumbs.db
 
 # Soroban
 *.wasm
+package-lock.json
+frontend/next-env.d.ts
