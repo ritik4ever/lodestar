@@ -1,0 +1,22 @@
+{
+  "name": "lodestar-agent",
+  "version": "1.0.0",
+  "description": "Lodestar demo agent — discovers and pays for x402 services autonomously",
+  "type": "module",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.3.0",
+    "@x402/core": "^0.3.0",
+    "@x402/fetch": "^0.3.0",
+    "@x402/stellar": "^0.3.0",
+    "dotenv": "^16.4.5",
+    "pino": "^9.3.2",
+    "pino-pretty": "^11.2.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
