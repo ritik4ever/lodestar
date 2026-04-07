@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^12.3.0",
-    "@x402/core": "^0.3.0",
-    "@x402/express": "^0.3.0",
-    "@x402/stellar": "^0.3.0",
+    "@x402/core": "^2.9.0",
+    "@x402/express": "^2.9.0",
+    "@x402/stellar": "^2.9.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
