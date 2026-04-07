@@ -4,6 +4,7 @@ import config from './config.js';
 import logger from './lib/logger.js';
 import registryRouter from './routes/registry.js';
 import servicesRouter from './routes/services.js';
+import demoRouter from './routes/demo.js';
 
 const app = express();
 
@@ -11,6 +12,7 @@ app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json());
 
 app.use('/api', registryRouter);
+app.use('/api', demoRouter);
 app.use('/demo', servicesRouter);
 
 app.use((err, _req, res, _next) => {
