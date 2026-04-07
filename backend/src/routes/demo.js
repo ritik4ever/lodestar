@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import { x402Client, x402HTTPClient } from '@x402/fetch';
+import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { createEd25519Signer } from '@x402/stellar';
 import { ExactStellarScheme } from '@x402/stellar/exact/client';
-import { Transaction, TransactionBuilder } from '@stellar/stellar-sdk';
 import config from '../config.js';
 import logger from '../lib/logger.js';
 import { getService } from '../lib/contract.js';
@@ -12,12 +11,9 @@ const router = Router();
 
 function buildHttpClient() {
   const signer = createEd25519Signer(config.server.secret, 'stellar:testnet');
-  const passphrase = config.stellar.networkPassphrase;
-
   const scheme = new ExactStellarScheme(signer, { url: config.stellar.rpcUrl });
-
   const client = new x402Client().register('stellar:*', scheme);
-  return { httpClient: new x402HTTPClient(client), passphrase };
+  return new x402HTTPClient(client);
 }
 
 router.post('/demo-run', async (req, res) => {
@@ -40,7 +36,7 @@ router.post('/demo-run', async (req, res) => {
       endpointUrl += '?q=Stellar+blockchain+AI+agents';
     }
 
-    const { httpClient } = buildHttpClient();
+    const httpClient = buildHttpClient();
 
     const response = await httpClient.fetch(endpointUrl);
 

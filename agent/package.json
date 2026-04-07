@@ -9,9 +9,8 @@
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^12.3.0",
-    "@x402/core": "^0.3.0",
-    "@x402/fetch": "^0.3.0",
-    "@x402/stellar": "^0.3.0",
+    "@x402/core": "^2.9.0",
+    "@x402/stellar": "^2.9.0",
     "dotenv": "^16.4.5",
     "pino": "^9.3.2",
     "pino-pretty": "^11.2.2"

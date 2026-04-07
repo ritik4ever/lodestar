@@ -1,16 +1,14 @@
 import 'dotenv/config';
 import pino from 'pino';
-import { x402Client, x402HTTPClient } from '@x402/fetch';
+import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { createEd25519Signer } from '@x402/stellar';
 import { ExactStellarScheme } from '@x402/stellar/exact/client';
-import { Transaction, TransactionBuilder } from '@stellar/stellar-sdk';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const required = [
   'AGENT_STELLAR_SECRET',
   'STELLAR_RPC_URL',
-  'STELLAR_NETWORK_PASSPHRASE',
   'LODESTAR_API_URL',
 ];
 for (const key of required) {
@@ -21,7 +19,6 @@ for (const key of required) {
 
 const AGENT_SECRET      = process.env.AGENT_STELLAR_SECRET;
 const RPC_URL           = process.env.STELLAR_RPC_URL;
-const PASSPHRASE        = process.env.STELLAR_NETWORK_PASSPHRASE;
 const LODESTAR_API_URL  = process.env.LODESTAR_API_URL;
 
 const logger = pino({
