@@ -1,0 +1,27 @@
+{
+  "name": "lodestar-backend",
+  "version": "1.0.0",
+  "description": "Lodestar service discovery backend — x402 on Stellar",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "seed": "node scripts/seed.js"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.3.0",
+    "@x402/core": "^0.3.0",
+    "@x402/express": "^0.3.0",
+    "@x402/stellar": "^0.3.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2",
+    "pino": "^9.3.2",
+    "pino-pretty": "^11.2.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
