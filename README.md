@@ -1,0 +1,199 @@
+# Lodestar
+### Navigate the agent economy
+
+Lodestar is an on-chain service discovery marketplace for x402 AI agent payments on the Stellar blockchain. It is the missing discovery layer in the x402 ecosystem — a permanent, neutral, permissionless registry where service providers list their endpoints once and AI agents find them autonomously, with zero hardcoded URLs.
+
+---
+
+## The Problem
+
+AI agents can already pay for services via the x402 protocol on Stellar. But they cannot find services on their own — every URL is hardcoded by a human. This breaks the promise of autonomous agents: if a developer has to manually wire every service endpoint into every agent, you haven't built autonomy, you've built a very expensive API client.
+
+## The Solution
+
+Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. Service providers call `register_service` once. AI agents call `list_services`, pick the best result by reputation, hit the endpoint, and pay via x402 — all without a single hardcoded URL. The registry is permanent and permissionless: no owner, no gatekeeping, no downtime.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        PROVIDERS                            │
+│  register_service(name, endpoint, price, category)          │
+│         │                                                   │
+│         ▼                                                   │
+│  ┌─────────────────────────────────────┐                   │
+│  │     Soroban Smart Contract          │                   │
+│  │     (Lodestar Registry)             │                   │
+│  │                                     │                   │
+│  │  - ServiceEntry[] (persistent)      │                   │
+│  │  - reputation scoring               │                   │
+│  │  - category filtering               │                   │
+│  └─────────────────────────────────────┘                   │
+│         │                                                   │
+│         ▼                                                   │
+│                        AI AGENTS                            │
+│                                                             │
+│  1. list_services(category: "weather")                      │
+│  2. sort by reputation → pick best                          │
+│  3. GET endpoint → 402 Payment Required                     │
+│  4. build + sign x402 payment on Stellar                    │
+│  5. retry with payment → receive data                       │
+│  6. update_reputation(id, positive: true)                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## How It Works
+
+### Provider flow
+1. Deploy any HTTP service that returns `402 Payment Required` with x402 headers
+2. Call `register_service` on the Lodestar Soroban contract with your endpoint, price, and category
+3. Your service is now permanently discoverable by any agent querying the registry
+
+### Agent flow
+1. Call `list_services(category)` — returns active services sorted by reputation
+2. Pick the top result (highest reputation, lowest price, or newest)
+3. Make an HTTP request to the endpoint — receive a `402 Payment Required` response
+4. Build and sign an x402 payment transaction on Stellar using the agent's keypair
+5. Retry the request with the payment header — receive the data
+6. Optionally call `update_reputation` to improve the service's score for future agents
+
+---
+
+## Tech Stack
+
+- **Smart Contract**: Rust + soroban-sdk on Stellar Testnet
+- **Backend**: Node.js v22 + Express (ES modules)
+- **Frontend**: Next.js 14 App Router + TypeScript + Tailwind CSS
+- **Payments**: x402 protocol (`@x402/express`, `@x402/fetch`, `@x402/stellar`)
+- **Stellar SDK**: `@stellar/stellar-sdk`
+- **Wallet**: Freighter (`@stellar/freighter-api`)
+
+---
+
+## Prerequisites
+
+- Node.js v22+
+- Rust (stable) + `wasm32-unknown-unknown` target
+- Stellar CLI
+- Freighter browser extension (for frontend wallet interactions)
+
+---
+
+## Setup
+
+### 1. Clone
+
+```sh
+git clone git@github.com:ritik4ever/lodestar.git
+cd lodestar
+```
+
+### 2. Deploy the Soroban contract
+
+Follow [contract/DEPLOY.md](contract/DEPLOY.md) for full instructions.
+
+```sh
+# Install Stellar CLI
+curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh
+
+# Add wasm target
+rustup target add wasm32-unknown-unknown
+
+# Fund a deployer key
+stellar keys generate deployer --network testnet --fund
+
+# Build and deploy
+cd contract
+stellar contract build
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/lodestar_registry.wasm \
+  --source deployer \
+  --network testnet
+```
+
+Copy the printed contract ID — you will need it in the next steps.
+
+### 3. Configure backend
+
+```sh
+cd backend
+cp .env.example .env
+# Fill in CONTRACT_ID, SERVER_STELLAR_ADDRESS, SERVER_STELLAR_SECRET, BRAVE_API_KEY
+npm install
+```
+
+### 4. Run seed script
+
+```sh
+node scripts/seed.js
+```
+
+This registers the four demo services (weather, search, and two live Stellar services) into the on-chain registry.
+
+### 5. Start backend
+
+```sh
+npm start
+# Running on http://localhost:3001
+```
+
+### 6. Configure and start frontend
+
+```sh
+cd ../frontend
+cp .env.local.example .env.local
+# Fill in NEXT_PUBLIC_CONTRACT_ID
+npm install
+npm run dev
+# Running on http://localhost:3000
+```
+
+### 7. Run the agent
+
+```sh
+cd ../agent
+cp .env.example .env
+# Fill in AGENT_STELLAR_SECRET
+npm install
+node agent.js
+```
+
+The agent will:
+- Query the Lodestar registry for weather and search services
+- Select the best by reputation
+- Pay via x402 on Stellar
+- Log the data received and update on-chain reputation
+
+---
+
+## Hackathon: Stellar Hacks Agentic AI 2026
+
+Lodestar addresses all three brief requirements:
+
+**Bazaar discoverability** — Lodestar is the discoverability layer. Any agent can call `list_services` and find x402 endpoints without human intervention. The registry is on-chain, so it is as neutral and permanent as Stellar itself.
+
+**Bazaar-enabled facilitator** — The backend wraps the x402 facilitator and exposes a `/api/demo-run` endpoint that drives a full payment cycle: 402 → sign → retry → data. The demo page visualizes this step by step in real time.
+
+**Mainnet-ready infrastructure** — The Soroban contract uses persistent storage with maximum TTL to prevent archival. The backend is production-grade (pino logging, env validation, proper error codes). The frontend is Next.js 14 with TypeScript strict mode. Switching to mainnet requires changing one env var: `STELLAR_NETWORK=mainnet`.
+
+---
+
+## Testnet Transactions
+
+> Paste transaction hashes here after running the demo.
+
+---
+
+## Demo Video
+
+> Paste link here after recording.
+
+---
+
+## License
+
+MIT
