@@ -2,47 +2,54 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import type { FreighterStatus } from '@/lib/types';
-import { isFreighterInstalled, connectWallet, getBalance } from '@/lib/freighter';
+import { initKit, connectWithWallet, getBalance } from '@/lib/wallet';
 
 interface WalletContextValue {
   status: FreighterStatus;
   address: string;
   balance: string;
-  connect: () => Promise<void>;
+  connect: (walletId: string) => Promise<void>;
+  disconnect: () => void;
 }
 
 const WalletContext = createContext<WalletContextValue>({
-  status: 'not-installed',
+  status: 'not-connected',
   address: '',
   balance: '',
   connect: async () => {},
+  disconnect: () => {},
 });
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = useState<FreighterStatus>('not-installed');
+  const [status, setStatus]   = useState<FreighterStatus>('not-connected');
   const [address, setAddress] = useState('');
   const [balance, setBalance] = useState('');
 
   useEffect(() => {
-    if (isFreighterInstalled()) {
-      setStatus('not-connected');
-    }
+    if (typeof window !== 'undefined') initKit();
   }, []);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (walletId: string) => {
     try {
-      const addr = await connectWallet();
+      const addr = await connectWithWallet(walletId);
       setAddress(addr);
       setStatus('connected');
       const bal = await getBalance(addr);
       setBalance(bal);
     } catch {
       setStatus('not-connected');
+      throw new Error('Failed to connect wallet');
     }
   }, []);
 
+  const disconnect = useCallback(() => {
+    setStatus('not-connected');
+    setAddress('');
+    setBalance('');
+  }, []);
+
   return (
-    <WalletContext.Provider value={{ status, address, balance, connect }}>
+    <WalletContext.Provider value={{ status, address, balance, connect, disconnect }}>
       {children}
     </WalletContext.Provider>
   );

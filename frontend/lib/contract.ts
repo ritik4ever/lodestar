@@ -66,7 +66,7 @@ export async function registerService(
     Address,
   } = await import('@stellar/stellar-sdk');
 
-  const { signTx } = await import('./freighter');
+  const { kitSignTransaction: signTx } = await import('./wallet');
 
   const contractId = process.env.NEXT_PUBLIC_CONTRACT_ID ?? '';
   const rpcUrl =
@@ -103,7 +103,7 @@ export async function registerService(
   }
 
   const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const signedXdr = await signTx(preparedTx.toXDR(), networkPassphrase);
+  const signedXdr = await signTx(preparedTx.toXDR());
 
   const { TransactionBuilder: TB } = await import('@stellar/stellar-sdk');
   const signedTx = TB.fromXDR(signedXdr, networkPassphrase);

@@ -1,10 +1,13 @@
 'use client';
 
+import { useState } from 'react';
 import { useWallet } from '@/components/WalletContext';
+import WalletPickerModal from '@/components/WalletPickerModal';
 import RegisterForm from '@/components/RegisterForm';
 
 export default function RegisterPage() {
-  const { status, address, balance, connect } = useWallet();
+  const { status, address, balance } = useWallet();
+  const [showPicker, setShowPicker] = useState(false);
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12">
@@ -16,26 +19,6 @@ export default function RegisterPage() {
         </p>
       </div>
 
-      {/* Wallet status */}
-      {status === 'not-installed' && (
-        <div className="card p-6 mb-6 flex items-center justify-between">
-          <div>
-            <p className="font-medium text-sm">Freighter wallet required</p>
-            <p className="text-secondary text-xs mt-1">
-              Install Freighter to sign the registration transaction.
-            </p>
-          </div>
-          <a
-            href="https://freighter.app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-primary shrink-0"
-          >
-            Install Freighter
-          </a>
-        </div>
-      )}
-
       {status === 'not-connected' && (
         <div className="card p-6 mb-6 flex items-center justify-between">
           <div>
@@ -44,7 +27,7 @@ export default function RegisterPage() {
               Your address will be recorded as the service provider on-chain.
             </p>
           </div>
-          <button onClick={connect} className="btn-primary shrink-0">
+          <button onClick={() => setShowPicker(true)} className="btn-primary shrink-0">
             Connect Wallet
           </button>
         </div>
@@ -78,6 +61,8 @@ export default function RegisterPage() {
           </div>
         </div>
       )}
+
+      {showPicker && <WalletPickerModal onClose={() => setShowPicker(false)} />}
     </div>
   );
 }
