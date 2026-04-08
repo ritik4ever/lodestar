@@ -44,6 +44,7 @@ export interface ActivityEntry {
 }
 
 export type FreighterStatus = 'not-installed' | 'not-connected' | 'connected';
+export type WalletMode = 'freighter' | 'keypair';
 
 export type SortOption = 'newest' | 'reputation' | 'price';
 
