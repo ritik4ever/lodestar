@@ -63,6 +63,7 @@ export async function registerService(
     Networks,
     SorobanRpc,
     nativeToScVal,
+    scValToNative,
     Address,
   } = await import('@stellar/stellar-sdk');
 
@@ -105,8 +106,7 @@ export async function registerService(
   const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
   const signedXdr = await signTx(preparedTx.toXDR());
 
-  const { TransactionBuilder: TB } = await import('@stellar/stellar-sdk');
-  const signedTx = TB.fromXDR(signedXdr, networkPassphrase);
+  const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
 
   const sendResult = await server.sendTransaction(signedTx);
   if (sendResult.status === 'ERROR') {
@@ -123,5 +123,9 @@ export async function registerService(
     throw new Error('Transaction failed on-chain');
   }
 
-  return { txHash: sendResult.hash, id: 0 };
+  const id =
+    getResult.status === 'SUCCESS' && getResult.returnValue
+      ? Number(scValToNative(getResult.returnValue))
+      : 0;
+  return { txHash: sendResult.hash, id };
 }

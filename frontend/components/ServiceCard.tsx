@@ -59,11 +59,7 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
     }
   }
 
-  const date = new Date(service.registered_at * 1000 * 5).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  const ledger = `Ledger #${service.registered_at.toLocaleString()}`;
 
   return (
     <div className="card p-6 flex flex-col gap-4 fade-in">
@@ -130,7 +126,7 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
         >
           {truncateAddr(service.provider)}
         </a>
-        <span className="text-xs text-secondary">{date}</span>
+        <span className="text-xs text-secondary mono">{ledger}</span>
       </div>
 
       <button

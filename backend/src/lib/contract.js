@@ -89,44 +89,14 @@ async function simulateRead(operation) {
   return simResult.result?.retval;
 }
 
-function parseServiceEntry(scVal) {
-  if (!scVal) return null;
-  const native = scValToNative(scVal);
-  return {
-    id: Number(native.id),
-    name: native.name,
-    description: native.description,
-    endpoint: native.endpoint,
-    price_usdc: native.price_usdc,
-    category: native.category,
-    provider: native.provider.toString(),
-    reputation: Number(native.reputation),
-    active: native.active,
-    registered_at: Number(native.registered_at),
-  };
-}
 
 export async function listServices(category) {
   try {
     const contract = getContract();
-    const categoryArg = category
-      ? xdr.ScVal.scvVec([nativeToScVal(category, { type: 'string' })])
-      : xdr.ScVal.scvVoid();
 
-    const op = contract.call(
-      'list_services',
-      xdr.ScVal.scvVec(
-        category
-          ? [
-              xdr.ScVal.scvVec([nativeToScVal(category, { type: 'string' })]),
-            ]
-          : []
-      )
-    );
-
-    // Use Option<String> — pass Some(string) or None
+    // Option<String>: Some(s) = the string value directly; None = scvVoid
     const optionArg = category
-      ? nativeToScVal({ some: category }, { type: 'option' })
+      ? nativeToScVal(category, { type: 'string' })
       : xdr.ScVal.scvVoid();
 
     const callOp = contract.call('list_services', optionArg);
