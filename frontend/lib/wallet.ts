@@ -39,7 +39,7 @@ export function initKit() {
 export async function connectWithWallet(walletId: string): Promise<string> {
   initKit();
   StellarWalletsKit.setWallet(walletId);
-  const { address } = await StellarWalletsKit.getAddress();
+  const { address } = await StellarWalletsKit.fetchAddress();
   return address;
 }
 
