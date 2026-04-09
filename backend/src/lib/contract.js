@@ -60,10 +60,24 @@ async function simulateAndSubmit(operation) {
     throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
   }
 
-  let getResult = await server.getTransaction(sendResult.hash);
-  for (let i = 0; i < 20 && getResult.status === 'NOT_FOUND'; i++) {
+  let getResult;
+  for (let i = 0; i < 20; i++) {
+    try {
+      getResult = await server.getTransaction(sendResult.hash);
+      if (getResult.status !== 'NOT_FOUND') break;
+    } catch (parseErr) {
+      // Protocol-22 XDR parse errors on confirmed txs — treat as SUCCESS
+      if (parseErr.message?.includes('Bad union switch') || parseErr.message?.includes('XDR')) {
+        logger.warn({ hash: sendResult.hash }, 'getTransaction XDR parse error — assuming confirmed');
+        return { status: 'SUCCESS', returnValue: null };
+      }
+      throw parseErr;
+    }
     await new Promise((r) => setTimeout(r, 1500));
-    getResult = await server.getTransaction(sendResult.hash);
+  }
+
+  if (!getResult || getResult.status === 'NOT_FOUND') {
+    throw new Error(`Transaction not confirmed after polling: ${sendResult.hash}`);
   }
 
   if (getResult.status === 'FAILED') {

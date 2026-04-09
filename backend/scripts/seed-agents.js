@@ -1,27 +1,26 @@
 import 'dotenv/config';
+import pkg from '@stellar/stellar-sdk';
+const { Keypair } = pkg;
 import { getAgentCount, registerAgentOnChain, recordPaymentOnChain } from '../src/lib/contract.js';
 import logger from '../src/lib/logger.js';
 
-// Three demo agents at different score tiers.
-// Each uses a distinct Stellar testnet keypair (public only — server is the owner).
+// Generate fresh random keypairs — addresses are stored on-chain so re-runs
+// are skipped via the count check (idempotent).
 const AGENTS = [
   {
-    // Score tier: New (starts at 100, net: 1 successful payment = +10 → 110)
-    address: 'GDEMOAGENT1NEWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW',
+    keypair: Keypair.random(),
     name: 'NewAgent-Alpha',
     description: 'A freshly registered agent. Just getting started on the Lodestar network.',
     payments: [{ amount: 10000, success: true }], // score → 110
   },
   {
-    // Score tier: Established (100 + 50 successful * 10 = 600)
-    address: 'GDEMOAGENT2ESTBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+    keypair: Keypair.random(),
     name: 'EstablishedAgent-Beta',
     description: 'Mid-tier agent with a solid track record of successful x402 payments.',
     payments: Array(50).fill({ amount: 10000, success: true }), // score → 600
   },
   {
-    // Score tier: Trusted (100 + 85 successful * 10 - 0 failures = 950)
-    address: 'GDEMOAGENT3TRUSTEDCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+    keypair: Keypair.random(),
     name: 'TrustedAgent-Gamma',
     description: 'High-trust agent. Consistent payment history across weather, search, and finance services.',
     payments: Array(85).fill({ amount: 10000, success: true }), // score → 950
@@ -44,13 +43,14 @@ async function seed() {
     }
 
     for (const agent of AGENTS) {
+      const address = agent.keypair.publicKey();
       try {
-        await registerAgentOnChain(agent.address, agent.name, agent.description);
-        logger.info({ name: agent.name, address: agent.address }, 'Agent registered');
+        logger.info({ name: agent.name, address }, 'Registering agent…');
+        await registerAgentOnChain(address, agent.name, agent.description);
+        logger.info({ name: agent.name }, 'Agent registered — building payment history…');
 
-        // Replay payment history to build score
         for (const p of agent.payments) {
-          await recordPaymentOnChain(agent.address, BigInt(p.amount), p.success);
+          await recordPaymentOnChain(address, BigInt(p.amount), p.success);
         }
         logger.info({ name: agent.name, payments: agent.payments.length }, 'Payment history recorded');
       } catch (err) {
