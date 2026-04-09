@@ -6,6 +6,7 @@ import WalletConnect from './WalletConnect';
 
 const links = [
   { href: '/registry', label: 'Registry' },
+  { href: '/agents', label: 'Agents' },
   { href: '/register', label: 'Register' },
   { href: '/demo', label: 'Demo' },
 ];

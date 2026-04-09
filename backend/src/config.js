@@ -30,6 +30,7 @@ const config = Object.freeze({
 
   contract: {
     id: process.env.CONTRACT_ID,
+    agentsId: process.env.AGENTS_CONTRACT_ID ?? null,
   },
 
   server: {

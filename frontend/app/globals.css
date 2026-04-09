@@ -56,6 +56,10 @@ body {
   .badge {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
+
+  .input {
+    @apply bg-background border border-border rounded-lg px-4 py-2.5 text-sm text-primary placeholder:text-secondary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-shadow;
+  }
 }
 
 @keyframes fadeIn {

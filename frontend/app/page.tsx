@@ -18,6 +18,9 @@ export default function HomePage() {
           <Link href="/registry" className="btn-primary px-7 py-3 text-base">
             Browse Registry
           </Link>
+          <Link href="/agents" className="btn-secondary px-7 py-3 text-base">
+            Agent Scores
+          </Link>
           <Link href="/register" className="btn-secondary px-7 py-3 text-base">
             Register a Service
           </Link>
@@ -41,6 +44,46 @@ export default function HomePage() {
           title="On Stellar"
           description="Lodestar runs on Soroban, Stellar's smart contract platform. Permanent, neutral, permissionless. No owner, no gatekeeping, no downtime."
         />
+      </section>
+
+      {/* Agent Credit Scoring callout */}
+      <section className="border-t border-border py-16">
+        <div className="card p-8 md:p-12 flex flex-col md:flex-row items-start gap-8">
+          <div className="flex-1">
+            <span className="badge bg-violet-50 text-violet-700 mb-4 inline-block">New</span>
+            <h2 className="text-2xl font-semibold tracking-tight mb-3">
+              Agent Credit Scoring
+            </h2>
+            <p className="text-secondary text-sm leading-relaxed mb-6 max-w-lg">
+              Every AI agent that pays for services through Lodestar builds an on-chain
+              credit score. Providers can gate access by score, set per-transaction and
+              daily spend limits, and detect misbehaving agents — all enforced by Soroban.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Link href="/agents" className="btn-primary px-5 py-2.5 text-sm">
+                View Agent Scores
+              </Link>
+              <Link href="/agents/register" className="btn-secondary px-5 py-2.5 text-sm">
+                Register Your Agent
+              </Link>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3 shrink-0 w-full md:w-auto">
+            {[
+              { score: 100, name: 'New agent', detail: 'Just starting out' },
+              { score: 600, name: 'Established agent', detail: '50 successful payments' },
+              { score: 950, name: 'Trusted agent', detail: '85 payments, consistent record' },
+            ].map(({ score, name, detail }) => (
+              <div key={score} className="bg-background border border-border rounded-lg px-4 py-3 flex items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium">{name}</div>
+                  <div className="text-xs text-secondary">{detail}</div>
+                </div>
+                <ScorePill score={score} />
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       {/* How it works */}
@@ -68,6 +111,31 @@ export default function HomePage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function ScorePill({ score }: { score: number }) {
+  const tier =
+    score >= 1000 ? 'elite' :
+    score >= 900  ? 'trusted' :
+    score >= 600  ? 'established' :
+    score >= 300  ? 'building' : 'new';
+  const colors: Record<string, string> = {
+    new: 'text-gray-500 bg-gray-50',
+    building: 'text-blue-600 bg-blue-50',
+    established: 'text-violet-600 bg-violet-50',
+    trusted: 'text-emerald-600 bg-emerald-50',
+    elite: 'text-amber-600 bg-amber-50',
+  };
+  const dot: Record<string, string> = {
+    new: 'bg-gray-400', building: 'bg-blue-500',
+    established: 'bg-violet-500', trusted: 'bg-emerald-500', elite: 'bg-amber-500',
+  };
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${colors[tier]}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${dot[tier]}`} />
+      {score}
+    </span>
   );
 }
 

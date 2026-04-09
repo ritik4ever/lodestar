@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "seed-agents": "node scripts/seed-agents.js"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^13.0.0",
