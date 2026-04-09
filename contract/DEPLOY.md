@@ -8,7 +8,12 @@
 ## 1. Install Stellar CLI
 
 ```sh
-curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/stellar/stellar-cli/main/install.sh | sh
+```
+
+Or via cargo (slower but also works):
+```sh
+cargo install --locked stellar-cli
 ```
 
 ## 2. Install Rust WASM target
@@ -20,7 +25,8 @@ rustup target add wasm32-unknown-unknown
 ## 3. Generate and fund deployer key
 
 ```sh
-stellar keys generate deployer --network testnet --fund
+stellar keys generate deployer --network testnet
+stellar keys fund deployer --network testnet
 ```
 
 ## 4. Build contract

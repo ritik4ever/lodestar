@@ -1,11 +1,12 @@
-import { SorobanRpc, Networks } from '@stellar/stellar-sdk';
+import pkg from '@stellar/stellar-sdk';
+const { rpc, Networks } = pkg;
 import config from '../config.js';
 
 let _server = null;
 
 export function getStellarServer() {
   if (!_server) {
-    _server = new SorobanRpc.Server(config.stellar.rpcUrl, {
+    _server = new rpc.Server(config.stellar.rpcUrl, {
       allowHttp: config.stellar.rpcUrl.startsWith('http://'),
     });
   }

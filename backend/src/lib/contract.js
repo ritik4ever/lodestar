@@ -1,4 +1,5 @@
-import {
+import pkg from '@stellar/stellar-sdk';
+const {
   Contract,
   Keypair,
   TransactionBuilder,
@@ -7,8 +8,8 @@ import {
   Address,
   nativeToScVal,
   scValToNative,
-} from '@stellar/stellar-sdk';
-import { SorobanRpc } from '@stellar/stellar-sdk';
+  rpc,
+} = pkg;
 import config from '../config.js';
 import { getStellarServer, getNetworkPassphrase } from './stellar.js';
 import logger from './logger.js';
@@ -40,11 +41,11 @@ async function simulateAndSubmit(operation) {
 
   const simResult = await server.simulateTransaction(tx);
 
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
+  if (rpc.Api.isSimulationError(simResult)) {
     throw new Error(`Simulation failed: ${simResult.error}`);
   }
 
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
+  const preparedTx = rpc.assembleTransaction(tx, simResult).build();
   preparedTx.sign(keypair);
 
   const sendResult = await server.sendTransaction(preparedTx);
@@ -82,7 +83,7 @@ async function simulateRead(operation) {
 
   const simResult = await server.simulateTransaction(tx);
 
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
+  if (rpc.Api.isSimulationError(simResult)) {
     throw new Error(`Simulation failed: ${simResult.error}`);
   }
 
