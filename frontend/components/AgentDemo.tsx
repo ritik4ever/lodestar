@@ -53,15 +53,6 @@ export default function AgentDemo() {
     });
   }
 
-  function activateLastStep() {
-    setSteps((prev) => {
-      const next = [...prev];
-      const last = next[next.length - 1];
-      if (last) next[next.length - 1] = { ...last, status: 'active' };
-      return next;
-    });
-  }
-
   async function runAgent() {
     setRunning(true);
     setSteps([]);
@@ -93,14 +84,6 @@ export default function AgentDemo() {
       // Step 4 — send payment
       pushStep('Sending x402 payment on Stellar…', 'active');
       await new Promise((r) => setTimeout(r, 800));
-
-      // Build the request URL
-      let endpointUrl = best.endpoint;
-      if (need === 'weather') {
-        endpointUrl += '?lat=40.7128&lon=-74.0060';
-      } else {
-        endpointUrl += '?q=Stellar+blockchain+AI+agents';
-      }
 
       // The backend demo agent handles payment internally
       const demoRes = await fetch(`${API_URL}/api/demo-run`, {

@@ -27,6 +27,10 @@ export default function RegisterAgentPage() {
       setError('Connect your wallet or enter an agent address');
       return;
     }
+    if (!/^G[A-Z2-7]{55}$/.test(resolvedAddress)) {
+      setError('Invalid Stellar address — must start with G and be 56 characters');
+      return;
+    }
     if (!form.name.trim()) {
       setError('Name is required');
       return;

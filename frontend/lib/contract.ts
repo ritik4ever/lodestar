@@ -56,16 +56,18 @@ export async function registerService(
   formData: RegisterFormData,
   walletAddress: string
 ): Promise<{ txHash: string; id: number }> {
+  const stellarSdk = await import('@stellar/stellar-sdk');
+  const sdk = (stellarSdk as unknown as { default: typeof stellarSdk }).default ?? stellarSdk;
   const {
     Contract,
     TransactionBuilder,
     BASE_FEE,
     Networks,
-    SorobanRpc,
+    rpc,
     nativeToScVal,
     scValToNative,
     Address,
-  } = await import('@stellar/stellar-sdk');
+  } = sdk;
 
   const { kitSignTransaction: signTx } = await import('./wallet');
 
@@ -74,7 +76,7 @@ export async function registerService(
     process.env.NEXT_PUBLIC_STELLAR_RPC_URL ?? 'https://soroban-testnet.stellar.org';
   const networkPassphrase = Networks.TESTNET;
 
-  const server = new SorobanRpc.Server(rpcUrl);
+  const server = new rpc.Server(rpcUrl);
   const contract = new Contract(contractId);
   const account = await server.getAccount(walletAddress);
 
@@ -99,11 +101,11 @@ export async function registerService(
     .build();
 
   const simResult = await server.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
+  if (rpc.Api.isSimulationError(simResult)) {
     throw new Error(`Simulation failed: ${simResult.error}`);
   }
 
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
+  const preparedTx = rpc.assembleTransaction(tx, simResult).build();
   const signedXdr = await signTx(preparedTx.toXDR());
 
   const signedTx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
