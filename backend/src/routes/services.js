@@ -4,6 +4,7 @@ import { HTTPFacilitatorClient } from '@x402/core/server';
 import { ExactStellarScheme } from '@x402/stellar/exact/server';
 import config from '../config.js';
 import logger from '../lib/logger.js';
+import { recordPaymentOnChain } from '../lib/contract.js';
 
 const router = Router();
 
@@ -77,13 +78,23 @@ router.get('/weather', async (req, res) => {
       time: current.time,
     };
 
+    const agentAddress = req.headers['x-payment-address'] ?? '';
+    const txHash = req.headers['x-payment-transaction'] ?? '';
+
     recordActivity({
       timestamp: new Date().toISOString(),
-      agent: req.headers['x-payment-address'] ?? 'unknown',
+      agent: agentAddress || 'unknown',
       service: 'Lodestar Weather Service',
       amount: config.x402.weatherPrice,
-      txHash: req.headers['x-payment-transaction'] ?? '',
+      txHash,
     });
+
+    if (agentAddress && config.contract.agentsId) {
+      const priceStroops = BigInt(Math.round(parseFloat(config.x402.weatherPrice) * 10_000_000));
+      recordPaymentOnChain(agentAddress, priceStroops, true).catch((err) =>
+        logger.warn({ err, agentAddress }, 'Failed to record weather payment for agent')
+      );
+    }
 
     logger.info({ lat, lon }, 'Weather request fulfilled');
     res.json(result);
@@ -121,13 +132,23 @@ router.get('/search', async (req, res) => {
       description: r.description,
     }));
 
+    const searchAgentAddress = req.headers['x-payment-address'] ?? '';
+    const searchTxHash = req.headers['x-payment-transaction'] ?? '';
+
     recordActivity({
       timestamp: new Date().toISOString(),
-      agent: req.headers['x-payment-address'] ?? 'unknown',
+      agent: searchAgentAddress || 'unknown',
       service: 'Lodestar Search Service',
       amount: config.x402.searchPrice,
-      txHash: req.headers['x-payment-transaction'] ?? '',
+      txHash: searchTxHash,
     });
+
+    if (searchAgentAddress && config.contract.agentsId) {
+      const priceStroops = BigInt(Math.round(parseFloat(config.x402.searchPrice) * 10_000_000));
+      recordPaymentOnChain(searchAgentAddress, priceStroops, true).catch((err) =>
+        logger.warn({ err, agentAddress: searchAgentAddress }, 'Failed to record search payment for agent')
+      );
+    }
 
     logger.info({ q }, 'Search request fulfilled');
     res.json({ query: q, results });
