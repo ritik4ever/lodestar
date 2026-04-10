@@ -12,6 +12,8 @@ const app = express();
 app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(express.json());
 
+app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
+
 app.use('/api', registryRouter);
 app.use('/api', agentsRouter);
 app.use('/api', demoRouter);
