@@ -112,24 +112,26 @@ router.get('/search', async (req, res) => {
     }
 
     const response = await fetch(
-      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(q)}&count=5`,
+      'https://google.serper.dev/search',
       {
+        method: 'POST',
         headers: {
-          'Accept': 'application/json',
-          'X-Subscription-Token': config.braveApiKey,
+          'Content-Type': 'application/json',
+          'X-API-KEY': config.braveApiKey,
         },
+        body: JSON.stringify({ q, num: 5 }),
       }
     );
 
     if (!response.ok) {
-      throw new Error(`Brave Search error: ${response.status}`);
+      throw new Error(`Serper Search error: ${response.status}`);
     }
 
     const data = await response.json();
-    const results = (data.web?.results ?? []).slice(0, 5).map((r) => ({
+    const results = (data.organic ?? []).slice(0, 5).map((r) => ({
       title: r.title,
-      url: r.url,
-      description: r.description,
+      url: r.link,
+      description: r.snippet,
     }));
 
     const searchAgentAddress = req.headers['x-payment-address'] ?? '';

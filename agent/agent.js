@@ -121,8 +121,33 @@ async function recordOutcome(amountUsdc, success) {
 function buildHttpClient() {
   const signer = createEd25519Signer(AGENT_SECRET, 'stellar:testnet');
   const scheme = new ExactStellarScheme(signer, { url: RPC_URL });
-  const client = new x402Client().register('stellar:*', scheme);
-  return new x402HTTPClient(client);
+  const x402 = new x402Client().register('stellar:*', scheme);
+  const httpClient = new x402HTTPClient(x402);
+
+  // Implement fetch manually — x402HTTPClient.fetch() was removed in this version
+  httpClient.fetch = async (url, init = {}) => {
+    // Step 1: probe the endpoint
+    const probe = await fetch(url, init);
+    if (probe.status !== 402) return probe;
+
+    // Step 2: decode the 402 payment-required header
+    const paymentRequired = httpClient.getPaymentRequiredResponse(
+      (name) => probe.headers.get(name),
+      probe.status === 402 ? await probe.json().catch(() => undefined) : undefined
+    );
+
+    // Step 3: build and sign the payment payload
+    const paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
+
+    // Step 4: encode as header and retry
+    const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
+    return fetch(url, {
+      ...init,
+      headers: { ...(init.headers ?? {}), ...paymentHeaders },
+    });
+  };
+
+  return httpClient;
 }
 
 // ── Registry helpers ──────────────────────────────────────────────────────────
