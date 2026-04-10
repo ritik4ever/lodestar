@@ -1,5 +1,6 @@
 import AgentDemo from '@/components/AgentDemo';
 import ActivityFeed from '@/components/ActivityFeed';
+import CreditScoreDemo from '@/components/CreditScoreDemo';
 
 export default function DemoPage() {
   return (
@@ -15,10 +16,13 @@ export default function DemoPage() {
       </div>
 
       {/* Split layout */}
-      <div className="grid lg:grid-cols-2 gap-6 items-start">
+      <div className="grid lg:grid-cols-2 gap-6 items-start mb-16">
         <AgentDemo />
         <ActivityFeed />
       </div>
+
+      {/* Credit Score Demo */}
+      <CreditScoreDemo />
     </div>
   );
 }

@@ -389,6 +389,23 @@ export async function recordPaymentOnChain(agentAddress, amountStroops, success)
   }
 }
 
+export async function isAgentEligible(agentAddress, minScore) {
+  try {
+    const contract = getAgentsContract();
+    const op = contract.call(
+      'is_eligible',
+      nativeToScVal(Address.fromString(agentAddress), { type: 'address' }),
+      nativeToScVal(minScore, { type: 'i32' })
+    );
+    const retval = await simulateRead(op);
+    if (!retval) return false;
+    return Boolean(scValToNative(retval));
+  } catch (err) {
+    logger.error({ err, agentAddress, minScore }, 'isAgentEligible failed');
+    return false;
+  }
+}
+
 export async function checkSpendingAllowed(agentAddress, amountStroops) {
   try {
     const contract = getAgentsContract();

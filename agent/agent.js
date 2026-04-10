@@ -8,48 +8,56 @@ import { ExactStellarScheme } from '@x402/stellar/exact/client';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const required = [
-  'AGENT_STELLAR_SECRET',
-  'STELLAR_RPC_URL',
-  'LODESTAR_API_URL',
-];
+const required = ['AGENT_STELLAR_SECRET', 'STELLAR_RPC_URL', 'LODESTAR_API_URL'];
 for (const key of required) {
-  if (!process.env[key]) {
-    throw new Error(`Missing required env var: ${key}`);
-  }
+  if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
 }
 
 const AGENT_SECRET     = process.env.AGENT_STELLAR_SECRET;
 const RPC_URL          = process.env.STELLAR_RPC_URL;
 const LODESTAR_API_URL = process.env.LODESTAR_API_URL;
-const AGENT_NAME       = process.env.AGENT_NAME ?? 'Lodestar Demo Agent';
+const AGENT_NAME       = process.env.AGENT_NAME ?? 'LodestarAgent';
 const AGENT_DESC       = process.env.AGENT_DESC ?? 'Autonomous x402 agent powered by Lodestar service discovery';
+const MAX_PER_TX       = process.env.AGENT_MAX_PER_TX ?? '0.001';
+const MAX_PER_DAY      = process.env.AGENT_MAX_PER_DAY ?? '1.00';
+const ALLOWED_CATS     = (process.env.AGENT_ALLOWED_CATEGORIES ?? '').split(',').filter(Boolean);
+
+const agentKeypair = Keypair.fromSecret(AGENT_SECRET);
+const AGENT_ADDRESS = agentKeypair.publicKey();
 
 const logger = pino({
   level: 'info',
   transport: { target: 'pino-pretty', options: { colorize: true } },
 });
 
-// Derive agent address from secret
-const agentKeypair = Keypair.fromSecret(AGENT_SECRET);
-const AGENT_ADDRESS = agentKeypair.publicKey();
+// ── Credit scoring helpers ────────────────────────────────────────────────────
 
-// ── Agent registration ────────────────────────────────────────────────────────
+let currentScore = null;
+
+function tag() {
+  return currentScore !== null ? `[${AGENT_NAME} | Score: ${currentScore}]` : `[${AGENT_NAME}]`;
+}
 
 async function ensureRegistered() {
   try {
     const res = await fetch(`${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}`);
     if (res.status === 503) {
-      logger.info('Agents contract not yet deployed — skipping registration');
+      logger.info(`${tag()} Agents contract not deployed — scoring disabled`);
       return false;
     }
     if (res.ok) {
-      const agent = await res.json();
-      logger.info({ score: agent.score, address: AGENT_ADDRESS }, 'Agent already registered');
+      const data = await res.json();
+      const agent = data.agent ?? data;
+      currentScore = agent.score;
+      const policy = data.policy;
+      logger.info(
+        `${tag()} Already registered — score: ${agent.score}` +
+        (policy ? ` | daily limit: $${(Number(BigInt(policy.max_per_day_stroops)) / 10_000_000).toFixed(2)} USDC` : '')
+      );
       return true;
     }
     if (res.status === 404) {
-      logger.info('Agent not registered — registering now…');
+      logger.info(`${tag()} Not registered — registering now…`);
       const regRes = await fetch(`${LODESTAR_API_URL}/api/agents/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -57,55 +65,54 @@ async function ensureRegistered() {
           agentAddress: AGENT_ADDRESS,
           name: AGENT_NAME,
           description: AGENT_DESC,
+          maxPerTxUsdc: MAX_PER_TX,
+          maxPerDayUsdc: MAX_PER_DAY,
+          allowedCategories: ALLOWED_CATS,
         }),
       });
       if (regRes.ok) {
-        logger.info({ address: AGENT_ADDRESS }, 'Agent registered — starting score: 100');
+        currentScore = 100;
+        logger.info(`${tag()} Registered — starting score: 100`);
         return true;
       }
-      const err = await regRes.json();
-      logger.warn({ err }, 'Registration failed — proceeding without scoring');
+      const err = await regRes.json().catch(() => ({}));
+      logger.warn({ err }, `${tag()} Registration failed — scoring disabled`);
       return false;
     }
   } catch {
-    logger.warn('Could not check agent registration — proceeding without scoring');
+    logger.warn(`${tag()} Could not reach agents API — scoring disabled`);
   }
   return false;
 }
 
-async function getMyScore() {
-  try {
-    const res = await fetch(`${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}/score`);
-    if (!res.ok) return null;
-    const { score } = await res.json();
-    return score;
-  } catch {
-    return null;
-  }
-}
-
-async function checkSpending(amountStroops) {
+async function checkSpend(amountUsdc, category) {
   try {
     const res = await fetch(
-      `${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}/check?amount=${amountStroops}`
+      `${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}/can-spend` +
+      `?amount=${encodeURIComponent(amountUsdc)}&category=${encodeURIComponent(category)}`
     );
-    if (!res.ok) return true; // fail open if service unavailable
-    const { allowed } = await res.json();
-    return allowed;
+    if (!res.ok) return { allowed: true, reason: 'OK' };
+    return await res.json();
   } catch {
-    return true; // fail open
+    return { allowed: true, reason: 'OK' };
   }
 }
 
-async function recordOutcome(amountStroops, success) {
+async function recordOutcome(amountUsdc, success) {
   try {
-    await fetch(`${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}/payment`, {
+    const res = await fetch(`${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}/payment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amountStroops, success }),
+      body: JSON.stringify({ amountUsdc, success }),
     });
+    if (res.ok) {
+      const data = await res.json();
+      const oldScore = currentScore;
+      currentScore = data.newScore;
+      logger.info(`${tag()} Score updated: ${oldScore} → ${currentScore}`);
+    }
   } catch {
-    // non-critical — don't crash the agent
+    // non-critical
   }
 }
 
@@ -132,103 +139,79 @@ async function submitReputation(id, positive) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ positive }),
-  });
+  }).catch(() => {});
 }
 
 // ── Agent task ────────────────────────────────────────────────────────────────
 
 async function runTask(category, buildUrl, scoringEnabled) {
-  logger.info(`\n── Task: ${category} ──────────────────────────────────`);
+  logger.info(`\n${tag()} ── Task: ${category} ──────────────────────────────────`);
 
-  // 1. Discover
-  logger.info('Step 1: Querying Lodestar registry…');
+  logger.info(`${tag()} Step 1: Querying Lodestar registry…`);
   const services = await fetchServices(category);
 
   if (!services.length) {
-    logger.error(`No services found for category "${category}". Run the seed script first.`);
+    logger.error(`${tag()} No services found for category "${category}"`);
     return;
   }
 
-  logger.info(`Step 2: Found ${services.length} matching service(s)`);
-
-  // 2. Select best by reputation
+  logger.info(`${tag()} Step 2: Found ${services.length} service(s)`);
   const best = [...services].sort((a, b) => b.reputation - a.reputation)[0];
-  logger.info(`Step 3: Selected "${best.name}" at ${best.endpoint} ($${best.price_usdc} USDC)`);
+  logger.info(`${tag()} Step 3: Selected "${best.name}" — $${best.price_usdc} USDC`);
 
-  // 3. Check spending policy (1 USDC = 10,000,000 stroops)
-  const priceStroops = Math.round(parseFloat(best.price_usdc) * 10_000_000);
+  // Spending policy check
   if (scoringEnabled) {
-    const allowed = await checkSpending(priceStroops);
-    if (!allowed) {
-      logger.warn(
-        { priceStroops, address: AGENT_ADDRESS },
-        'Spending policy blocks this transaction — skipping'
-      );
+    const check = await checkSpend(best.price_usdc, category);
+    if (!check.allowed) {
+      logger.warn(`${tag()} Payment blocked by spending policy: ${check.reason}`);
       return;
     }
-    logger.info('Spending policy check passed');
+    logger.info(`${tag()} Spending policy check passed`);
   }
 
   const endpointUrl = buildUrl(best.endpoint);
+  logger.info(`${tag()} Step 4: Sending x402 payment on Stellar…`);
 
-  // 4. Build x402 client and make request
-  logger.info('Step 4: Sending x402 payment on Stellar…');
   const httpClient = buildHttpClient();
-
   let response;
   try {
     response = await httpClient.fetch(endpointUrl);
   } catch (err) {
-    logger.error({ err }, 'x402 payment failed');
-    if (scoringEnabled) await recordOutcome(priceStroops, false);
+    logger.error({ err }, `${tag()} x402 payment failed`);
+    if (scoringEnabled) await recordOutcome(best.price_usdc, false);
     return;
   }
 
   if (!response.ok) {
-    logger.error({ status: response.status }, 'Service returned error after payment');
-    if (scoringEnabled) await recordOutcome(priceStroops, false);
+    logger.error({ status: response.status }, `${tag()} Service error after payment`);
+    if (scoringEnabled) await recordOutcome(best.price_usdc, false);
     return;
   }
 
   const txHash = response.headers.get('x-payment-transaction') ?? '(no hash)';
-  logger.info(`Step 5: Payment confirmed — tx: ${txHash}`);
+  logger.info(`${tag()} Step 5: Payment confirmed — tx: ${txHash}`);
 
   const data = await response.json();
-  logger.info({ data }, `Paid $${best.price_usdc} USDC — received data`);
+  logger.info({ data }, `${tag()} Paid $${best.price_usdc} USDC — data received`);
 
-  // 5. Record payment outcome for credit scoring
-  if (scoringEnabled) {
-    await recordOutcome(priceStroops, true);
-    const newScore = await getMyScore();
-    if (newScore !== null) {
-      logger.info({ score: newScore }, 'Credit score updated');
-    }
-  }
+  if (scoringEnabled) await recordOutcome(best.price_usdc, true);
 
-  // 6. Submit positive reputation for the service
   await submitReputation(best.id, true);
-  logger.info(`Submitted positive reputation for "${best.name}"`);
+  logger.info(`${tag()} Submitted positive reputation for "${best.name}"`);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  logger.info('Lodestar Agent starting — zero hardcoded service URLs');
-  logger.info(`Agent address: ${AGENT_ADDRESS}`);
+  logger.info(`${tag()} Lodestar Agent starting`);
+  logger.info(`${tag()} Address: ${AGENT_ADDRESS}`);
 
-  // Auto-register for credit scoring (gracefully skipped if contract not deployed)
   const scoringEnabled = await ensureRegistered();
-  if (scoringEnabled) {
-    const score = await getMyScore();
-    if (score !== null) {
-      logger.info({ score }, 'Current credit score');
-    }
-  }
 
-  await runTask('weather', (endpoint) => `${endpoint}?lat=40.7128&lon=-74.0060`, scoringEnabled);
-  await runTask('search',  (endpoint) => `${endpoint}?q=Stellar+blockchain+AI+agents`, scoringEnabled);
+  await runTask('weather', (ep) => `${ep}?lat=40.7128&lon=-74.0060`, scoringEnabled);
+  await runTask('search', (ep) => `${ep}?q=Stellar+blockchain+AI+agents`, scoringEnabled);
 
-  logger.info('\nAgent complete.');
+  logger.info(`\n${tag()} Agent complete.`);
 }
 
 main().catch((err) => {

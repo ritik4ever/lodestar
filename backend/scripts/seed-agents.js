@@ -4,36 +4,51 @@ const { Keypair } = pkg;
 import { getAgentCount, registerAgentOnChain, recordPaymentOnChain } from '../src/lib/contract.js';
 import logger from '../src/lib/logger.js';
 
-// Generate fresh random keypairs — addresses are stored on-chain so re-runs
-// are skipped via the count check (idempotent).
+if (!process.env.AGENTS_CONTRACT_ID) {
+  logger.error('AGENTS_CONTRACT_ID not set — deploy the agents contract first');
+  process.exit(1);
+}
+
+// Use env secrets if provided, otherwise generate ephemeral keypairs.
+// Re-runs are idempotent via the agent count check.
+function resolveKeypair(envKey) {
+  const secret = process.env[envKey];
+  if (secret) {
+    try {
+      return Keypair.fromSecret(secret);
+    } catch {
+      logger.warn({ envKey }, 'Invalid secret in env — generating random keypair');
+    }
+  }
+  return Keypair.random();
+}
+
 const AGENTS = [
   {
-    keypair: Keypair.random(),
-    name: 'NewAgent-Alpha',
+    keypair: resolveKeypair('DEMO_AGENT_1_SECRET'),
+    name: 'NewAgent',
     description: 'A freshly registered agent. Just getting started on the Lodestar network.',
-    payments: [{ amount: 10000, success: true }], // score → 110
+    successPayments: 1,   // score → 110
+    failPayments: 0,
   },
   {
-    keypair: Keypair.random(),
-    name: 'EstablishedAgent-Beta',
+    keypair: resolveKeypair('DEMO_AGENT_2_SECRET'),
+    name: 'EstablishedAgent',
     description: 'Mid-tier agent with a solid track record of successful x402 payments.',
-    payments: Array(50).fill({ amount: 10000, success: true }), // score → 600
+    successPayments: 50,  // score → 600
+    failPayments: 0,
   },
   {
-    keypair: Keypair.random(),
-    name: 'TrustedAgent-Gamma',
+    keypair: resolveKeypair('DEMO_AGENT_3_SECRET'),
+    name: 'TrustedAgent',
     description: 'High-trust agent. Consistent payment history across weather, search, and finance services.',
-    payments: Array(85).fill({ amount: 10000, success: true }), // score → 950
+    successPayments: 90,  // score → 1000 (capped)
+    failPayments: 0,
   },
 ];
 
 async function seed() {
   try {
-    if (!process.env.AGENTS_CONTRACT_ID) {
-      logger.error('AGENTS_CONTRACT_ID not set — deploy the agents contract first, then run this script');
-      process.exit(1);
-    }
-
     const count = await getAgentCount();
     logger.info({ count }, 'Current agent count');
 
@@ -47,12 +62,25 @@ async function seed() {
       try {
         logger.info({ name: agent.name, address }, 'Registering agent…');
         await registerAgentOnChain(address, agent.name, agent.description);
-        logger.info({ name: agent.name }, 'Agent registered — building payment history…');
+        logger.info({ name: agent.name }, 'Registered — building payment history…');
 
-        for (const p of agent.payments) {
-          await recordPaymentOnChain(address, BigInt(p.amount), p.success);
+        const AMOUNT = 10_000n; // 0.001 USDC in stroops
+
+        for (let i = 0; i < agent.successPayments; i++) {
+          await recordPaymentOnChain(address, AMOUNT, true);
         }
-        logger.info({ name: agent.name, payments: agent.payments.length }, 'Payment history recorded');
+        for (let i = 0; i < agent.failPayments; i++) {
+          await recordPaymentOnChain(address, AMOUNT, false);
+        }
+
+        const finalScore = Math.min(
+          1000,
+          Math.max(0, 100 + agent.successPayments * 10 - agent.failPayments * 25)
+        );
+        logger.info(
+          { name: agent.name, payments: agent.successPayments + agent.failPayments, finalScore },
+          'Payment history recorded'
+        );
       } catch (err) {
         logger.error({ err, name: agent.name }, 'Failed to seed agent');
       }

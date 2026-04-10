@@ -4,6 +4,12 @@ import type {
   ServicesResponse,
   ReputationResponse,
   Category,
+  AgentEntry,
+  SpendingPolicy,
+  AgentStats,
+  AgentsResponse,
+  AgentEligibilityResponse,
+  AgentSpendCheckResponse,
 } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
@@ -130,4 +136,41 @@ export async function registerService(
       ? Number(scValToNative(getResult.returnValue))
       : 0;
   return { txHash: sendResult.hash, id };
+}
+
+// ── Agent Credit Scoring ──────────────────────────────────────────────────────
+
+export async function fetchAgents(limit = 50): Promise<{ agents: AgentEntry[]; count: number }> {
+  return apiFetch<AgentsResponse>(`/api/agents?limit=${limit}`);
+}
+
+export async function fetchAgent(
+  address: string
+): Promise<{ agent: AgentEntry; policy: SpendingPolicy | null }> {
+  return apiFetch<{ agent: AgentEntry; policy: SpendingPolicy | null }>(
+    `/api/agents/${address}`
+  );
+}
+
+export async function fetchAgentStats(): Promise<AgentStats> {
+  return apiFetch<AgentStats>('/api/agents/stats');
+}
+
+export async function fetchAgentEligibility(
+  address: string,
+  minScore: number
+): Promise<AgentEligibilityResponse> {
+  return apiFetch<AgentEligibilityResponse>(
+    `/api/agents/${address}/eligible?min_score=${minScore}`
+  );
+}
+
+export async function fetchAgentSpendCheck(
+  address: string,
+  amount: string,
+  category: string
+): Promise<AgentSpendCheckResponse> {
+  return apiFetch<AgentSpendCheckResponse>(
+    `/api/agents/${address}/can-spend?amount=${encodeURIComponent(amount)}&category=${encodeURIComponent(category)}`
+  );
 }

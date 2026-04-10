@@ -1,7 +1,9 @@
 # Lodestar
-### Navigate the agent economy
+### Navigate the agent economy — discover, pay, and build trust.
 
 Lodestar is an on-chain service discovery marketplace for x402 AI agent payments on the Stellar blockchain. It is the missing discovery layer in the x402 ecosystem — a permanent, neutral, permissionless registry where service providers list their endpoints once and AI agents find them autonomously, with zero hardcoded URLs.
+
+Lodestar ships two Soroban contracts: the **Service Registry** (discovery + reputation) and the **Agent Credit Scoring** system (identity + trust + spending policies).
 
 ---
 
@@ -18,30 +20,31 @@ Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        PROVIDERS                            │
-│  register_service(name, endpoint, price, category)          │
-│         │                                                   │
-│         ▼                                                   │
-│  ┌─────────────────────────────────────┐                   │
-│  │     Soroban Smart Contract          │                   │
-│  │     (Lodestar Registry)             │                   │
-│  │                                     │                   │
-│  │  - ServiceEntry[] (persistent)      │                   │
-│  │  - reputation scoring               │                   │
-│  │  - category filtering               │                   │
-│  └─────────────────────────────────────┘                   │
-│         │                                                   │
-│         ▼                                                   │
-│                        AI AGENTS                            │
-│                                                             │
-│  1. list_services(category: "weather")                      │
-│  2. sort by reputation → pick best                          │
-│  3. GET endpoint → 402 Payment Required                     │
-│  4. build + sign x402 payment on Stellar                    │
-│  5. retry with payment → receive data                       │
-│  6. update_reputation(id, positive: true)                   │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                          PROVIDERS                              │
+│  register_service(name, endpoint, price, category)              │
+│          │                                                      │
+│          ▼                                                      │
+│  ┌───────────────────────┐   ┌───────────────────────────────┐ │
+│  │  LodestarRegistry     │   │  LodestarAgents               │ │
+│  │  (Soroban contract)   │   │  (Soroban contract)           │ │
+│  │                       │   │                               │ │
+│  │  ServiceEntry[]       │   │  AgentEntry[]   score 0-1000  │ │
+│  │  reputation scoring   │   │  SpendingPolicy per agent     │ │
+│  │  category filtering   │   │  record_payment / is_eligible │ │
+│  └───────────┬───────────┘   └──────────────┬────────────────┘ │
+│              │                              │                   │
+│              └──────────────┬───────────────┘                   │
+│                             ▼                                   │
+│                         AI AGENTS                               │
+│                                                                 │
+│  1. list_services(category)      → discover endpoints           │
+│  2. is_eligible(address, score)  → check access                 │
+│  3. check_spending_allowed()     → enforce policy               │
+│  4. GET endpoint → 402 Payment Required                         │
+│  5. pay via x402 on Stellar → receive data                      │
+│  6. record_payment(success=true) → score += 10                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -167,6 +170,62 @@ The agent will:
 - Select the best by reputation
 - Pay via x402 on Stellar
 - Log the data received and update on-chain reputation
+
+---
+
+---
+
+## Agent Credit Scoring
+
+Lodestar ships a second Soroban contract that gives every AI agent a verifiable on-chain credit score.
+
+### The Problem
+
+Every agent is anonymous. Services cannot distinguish a reliable agent from a brand new untrusted one.
+
+### The Solution
+
+- Agents register on-chain and start with score **100**
+- Every successful x402 payment increases score by **+10**
+- Every failed payment decreases score by **−25**
+- Services can set minimum score requirements
+- Spending policies are enforced at contract level — cannot be bypassed
+
+### Score Tiers
+
+| Score | Tier | Access |
+|-------|------|--------|
+| 0–299 | New | Basic services only |
+| 300–599 | Building | Standard services |
+| 600–899 | Established | Premium services |
+| 900–999 | Trusted | All services |
+| 1000 | Elite | Elite tier |
+
+### Spending Policies
+
+Each agent has a programmable spending policy:
+- Maximum USDC per transaction
+- Maximum USDC per day (resets every ~17,280 ledgers ≈ 24 hours)
+- Allowed service categories
+
+Enforced at smart contract level — cannot be bypassed even if the agent wallet has sufficient balance.
+
+### Deploy the Agent Contract
+
+```sh
+cd contract/agents
+stellar contract build
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/lodestar_agents.wasm \
+  --source deployer \
+  --network testnet
+```
+
+Copy the printed contract ID, add to `.env` as `AGENTS_CONTRACT_ID`, then:
+
+```sh
+cd backend && npm run seed-agents
+```
 
 ---
 

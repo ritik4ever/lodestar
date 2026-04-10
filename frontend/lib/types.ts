@@ -119,3 +119,21 @@ export interface AgentRegisterRequest {
   name: string;
   description: string;
 }
+
+export interface AgentStats {
+  totalAgents: number;
+  avgScore: number;
+  topAgent: AgentEntry | null;
+  totalVolume: string;
+}
+
+export interface AgentEligibilityResponse {
+  eligible: boolean;
+  score: number;
+  required: number;
+}
+
+export interface AgentSpendCheckResponse {
+  allowed: boolean;
+  reason: string;
+}

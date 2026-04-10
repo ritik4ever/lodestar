@@ -72,6 +72,60 @@ node scripts/seed.js
 
 This pre-populates the registry with demo services.
 
+## 8. Deploy agent contract
+
+```sh
+cd contract/agents
+stellar contract build
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/lodestar_agents.wasm \
+  --source deployer \
+  --network testnet
+```
+
+Copy the printed contract ID.
+
+## 9. Add agent contract ID to env files
+
+```sh
+# backend/.env
+AGENTS_CONTRACT_ID=<paste agent contract id here>
+
+# frontend/.env.local
+NEXT_PUBLIC_AGENT_CONTRACT_ID=<paste agent contract id here>
+```
+
+## 10. (Optional) Set demo agent secrets
+
+Generate three funded testnet keypairs for richer seed data:
+
+```sh
+stellar keys generate new-agent --network testnet
+stellar keys fund new-agent --network testnet
+stellar keys generate established-agent --network testnet
+stellar keys fund established-agent --network testnet
+stellar keys generate trusted-agent --network testnet
+stellar keys fund trusted-agent --network testnet
+```
+
+Add their secrets to `backend/.env`:
+
+```sh
+DEMO_AGENT_1_SECRET=<new-agent secret>
+DEMO_AGENT_2_SECRET=<established-agent secret>
+DEMO_AGENT_3_SECRET=<trusted-agent secret>
+```
+
+If omitted, the seed script generates ephemeral random keypairs.
+
+## 11. Run agent seed script
+
+```sh
+cd backend && npm run seed-agents
+```
+
+This registers three demo agents (NewAgent ~110, EstablishedAgent ~600, TrustedAgent ~1000) and builds their payment histories on-chain.
+
 ## Network Details
 
 - Network: Stellar Testnet
