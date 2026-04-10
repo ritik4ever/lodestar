@@ -39,7 +39,7 @@ export default function Navbar() {
           </div>
           <div className="hidden md:flex items-center gap-3">
             <a
-              href="https://github.com/ritik4ever/lodestar#readme"
+              href="https://github.com/ritik4ever/lodestar/blob/main/README.md"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-secondary hover:text-primary transition-colors"
