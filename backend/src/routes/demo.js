@@ -12,8 +12,29 @@ const router = Router();
 function buildHttpClient() {
   const signer = createEd25519Signer(config.server.secret, 'stellar:testnet');
   const scheme = new ExactStellarScheme(signer, { url: config.stellar.rpcUrl });
-  const client = new x402Client().register('stellar:*', scheme);
-  return new x402HTTPClient(client);
+  const x402 = new x402Client().register('stellar:*', scheme);
+  const httpClient = new x402HTTPClient(x402);
+
+  httpClient.fetch = async (url, init = {}) => {
+    const probe = await fetch(url, init);
+    if (probe.status !== 402) return probe;
+
+    const body = probe.status === 402 ? await probe.json().catch(() => undefined) : undefined;
+    const paymentRequired = httpClient.getPaymentRequiredResponse(
+      (name) => probe.headers.get(name),
+      body
+    );
+
+    const paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
+    const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
+
+    return fetch(url, {
+      ...init,
+      headers: { ...(init.headers ?? {}), ...paymentHeaders },
+    });
+  };
+
+  return httpClient;
 }
 
 router.post('/demo-run', async (req, res) => {
