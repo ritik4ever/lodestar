@@ -15,9 +15,10 @@ function buildHttpClient() {
   const x402 = new x402Client().register('stellar:*', scheme);
   const httpClient = new x402HTTPClient(x402);
 
-  httpClient.fetch = async (url, init = {}) => {
+  // Returns { response, txHash }
+  httpClient.fetchWithTx = async (url, init = {}) => {
     const probe = await fetch(url, init);
-    if (probe.status !== 402) return probe;
+    if (probe.status !== 402) return { response: probe, txHash: '' };
 
     const body = await probe.json().catch(() => undefined);
     const paymentRequired = httpClient.getPaymentRequiredResponse(
@@ -33,20 +34,15 @@ function buildHttpClient() {
       headers: { ...(init.headers ?? {}), ...paymentHeaders },
     });
 
-    // Extract tx hash from PAYMENT-RESPONSE header and expose as x-payment-transaction
+    let txHash = '';
     try {
       const settle = httpClient.getPaymentSettleResponse((name) => paid.headers.get(name));
-      if (settle?.transaction) {
-        // Attach tx hash so caller can read it via response.headers.get('x-payment-transaction')
-        const origGet = paid.headers.get.bind(paid.headers);
-        paid.headers.get = (key) =>
-          key.toLowerCase() === 'x-payment-transaction' ? settle.transaction : origGet(key);
-      }
+      txHash = settle?.transaction ?? '';
     } catch {
-      // non-critical
+      // PAYMENT-RESPONSE header missing or unparseable
     }
 
-    return paid;
+    return { response: paid, txHash };
   };
 
   return httpClient;
@@ -77,15 +73,13 @@ router.post('/demo-run', async (req, res) => {
 
     const httpClient = buildHttpClient();
 
-    const response = await httpClient.fetch(endpointUrl);
+    const { response, txHash } = await httpClient.fetchWithTx(endpointUrl);
 
     if (!response.ok) {
       throw new Error(`Service responded with ${response.status}`);
     }
 
     const data = await response.json();
-
-    const txHash = response.headers.get('x-payment-transaction') ?? '';
 
     recordActivity({
       timestamp: new Date().toISOString(),
