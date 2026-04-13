@@ -50,7 +50,10 @@ router.post('/demo-run', async (req, res) => {
       return res.status(404).json({ error: 'Service not found', code: 'NOT_FOUND' });
     }
 
-    let endpointUrl = service.endpoint;
+    // Always use internal loopback — registry may store localhost from seed time
+    const baseUrl = `http://127.0.0.1:${config.port}`;
+    let endpointUrl = service.endpoint.replace(/https?:\/\/[^/]+/, baseUrl);
+
     if (category === 'weather') {
       endpointUrl += '?lat=40.7128&lon=-74.0060';
     } else if (category === 'search') {
