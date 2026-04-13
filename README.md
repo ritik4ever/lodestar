@@ -253,7 +253,15 @@ Lodestar addresses all three brief requirements:
 
 ## Testnet Transactions
 
-> Paste transaction hashes here after running the demo.
+Real x402 payment transactions on Stellar testnet:
+
+| Transaction | Description |
+|-------------|-------------|
+| [2f76a396e640686b9fc426231415fd7786131f7bcc8482250ff6f65c4c28d042](https://stellar.expert/explorer/testnet/tx/2f76a396e640686b9fc426231415fd7786131f7bcc8482250ff6f65c4c28d042) | Agent credit score payment — NewAgent-Alpha |
+| [6f13b95c5470a58f96b3fc43be3a8f0834bab8249e3fc91bc0c4b6627f5b5a59](https://stellar.expert/explorer/testnet/tx/6f13b95c5470a58f96b3fc43be3a8f0834bab8249e3fc91bc0c4b6627f5b5a59) | Agent credit score payment — EstablishedAgent-Beta |
+| [bcf0b4328d8ce3bac0fcd72c88f61c3a29acfcd256e4bf07d6b82393e8f22d2e](https://stellar.expert/explorer/testnet/tx/bcf0b4328d8ce3bac0fcd72c88f61c3a29acfcd256e4bf07d6b82393e8f22d2e) | Agent credit score payment — TrustedAgent-Gamma |
+
+> Add x402 weather/search payment tx hashes here after running the demo.
 
 ---
 

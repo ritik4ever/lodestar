@@ -17,6 +17,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
+    // 60s timeout to handle Render cold start (~50s wake time)
+    signal: AbortSignal.timeout(60000),
     ...init,
   });
   if (!res.ok) {
