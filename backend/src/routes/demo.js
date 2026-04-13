@@ -19,7 +19,7 @@ function buildHttpClient() {
     const probe = await fetch(url, init);
     if (probe.status !== 402) return probe;
 
-    const body = probe.status === 402 ? await probe.json().catch(() => undefined) : undefined;
+    const body = await probe.json().catch(() => undefined);
     const paymentRequired = httpClient.getPaymentRequiredResponse(
       (name) => probe.headers.get(name),
       body
@@ -28,10 +28,25 @@ function buildHttpClient() {
     const paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
     const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
 
-    return fetch(url, {
+    const paid = await fetch(url, {
       ...init,
       headers: { ...(init.headers ?? {}), ...paymentHeaders },
     });
+
+    // Extract tx hash from PAYMENT-RESPONSE header and expose as x-payment-transaction
+    try {
+      const settle = httpClient.getPaymentSettleResponse((name) => paid.headers.get(name));
+      if (settle?.transaction) {
+        // Attach tx hash so caller can read it via response.headers.get('x-payment-transaction')
+        const origGet = paid.headers.get.bind(paid.headers);
+        paid.headers.get = (key) =>
+          key.toLowerCase() === 'x-payment-transaction' ? settle.transaction : origGet(key);
+      }
+    } catch {
+      // non-critical
+    }
+
+    return paid;
   };
 
   return httpClient;
