@@ -197,7 +197,7 @@ export default function AgentDemo() {
             {JSON.stringify(result.data, null, 2)}
           </pre>
           <a
-            href={`${EXPLORER_URL}/account/GAY42LBQWN7LSFV3F6AFNEET2NVLY2JJ7KAEN4E5SNNT4RIEJLAQKGU3`}
+            href={result.txHash ? `${EXPLORER_URL}/tx/${result.txHash}` : `${EXPLORER_URL}/account/GAY42LBQWN7LSFV3F6AFNEET2NVLY2JJ7KAEN4E5SNNT4RIEJLAQKGU3`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-3 py-2 rounded-lg border border-accent/30 bg-accent/5 hover:bg-accent/10 transition-colors"
@@ -207,7 +207,12 @@ export default function AgentDemo() {
               <polyline points="15 3 21 3 21 9"/>
               <line x1="10" y1="14" x2="21" y2="3"/>
             </svg>
-            <span className="text-xs text-accent font-medium">View payment account on Stellar Explorer</span>
+            <span className="text-xs text-accent font-medium">
+              {result.txHash ? 'View transaction on Stellar Explorer' : 'View payment account on Stellar Explorer'}
+            </span>
+            {result.txHash && (
+              <span className="mono text-xs text-secondary ml-auto">{result.txHash.slice(0, 8)}…</span>
+            )}
           </a>
         </div>
       )}

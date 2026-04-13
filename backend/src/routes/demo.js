@@ -5,7 +5,7 @@ import { ExactStellarScheme } from '@x402/stellar/exact/client';
 import config from '../config.js';
 import logger from '../lib/logger.js';
 import { getService } from '../lib/contract.js';
-import { recordActivity } from './services.js';
+import { recordActivity, getActivityFeed } from './services.js';
 
 const router = Router();
 
@@ -65,13 +65,27 @@ router.post('/demo-run', async (req, res) => {
 
     const httpClient = buildHttpClient();
 
-    const { response, txHash } = await httpClient.fetchWithTx(endpointUrl);
+    const { response } = await httpClient.fetchWithTx(endpointUrl);
 
     if (!response.ok) {
       throw new Error(`Service responded with ${response.status}`);
     }
 
     const data = await response.json();
+
+    // Poll activity feed for up to 8 seconds to get the tx hash
+    // after x402 middleware completes async settlement
+    let txHash = '';
+    const activityCountBefore = getActivityFeed().length;
+    for (let i = 0; i < 16; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const feed = getActivityFeed();
+      const newest = feed[0];
+      if (feed.length > activityCountBefore && newest?.txHash) {
+        txHash = newest.txHash;
+        break;
+      }
+    }
 
     recordActivity({
       timestamp: new Date().toISOString(),
