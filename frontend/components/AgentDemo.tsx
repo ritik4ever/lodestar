@@ -196,24 +196,19 @@ export default function AgentDemo() {
           <pre className="mono text-xs bg-background rounded-lg p-3 overflow-auto max-h-48 text-primary">
             {JSON.stringify(result.data, null, 2)}
           </pre>
-          {result.txHash ? (
-            <a
-              href={`${EXPLORER_URL}/tx/${result.txHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-accent/30 bg-accent/5 hover:bg-accent/10 transition-colors"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent shrink-0">
-                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
-                <polyline points="15 3 21 3 21 9"/>
-                <line x1="10" y1="14" x2="21" y2="3"/>
-              </svg>
-              <span className="text-xs text-accent font-medium">View transaction on Stellar Explorer</span>
-              <span className="mono text-xs text-secondary ml-auto">{result.txHash.slice(0, 8)}…</span>
-            </a>
-          ) : (
-            <p className="text-xs text-secondary">Transaction hash not available</p>
-          )}
+          <a
+            href={`${EXPLORER_URL}/account/GAY42LBQWN7LSFV3F6AFNEET2NVLY2JJ7KAEN4E5SNNT4RIEJLAQKGU3`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-accent/30 bg-accent/5 hover:bg-accent/10 transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent shrink-0">
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
+              <polyline points="15 3 21 3 21 9"/>
+              <line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+            <span className="text-xs text-accent font-medium">View payment account on Stellar Explorer</span>
+          </a>
         </div>
       )}
     </div>

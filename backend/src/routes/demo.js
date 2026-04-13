@@ -34,27 +34,7 @@ function buildHttpClient() {
       headers: { ...(init.headers ?? {}), ...paymentHeaders },
     });
 
-    // Log all response headers for debugging
-    const allHeaders = {};
-    paid.headers.forEach((value, key) => { allHeaders[key] = value; });
-    logger.info({ headers: allHeaders }, 'Paid response headers');
-
-    // Try all possible header locations for the tx hash
-    let txHash =
-      paid.headers.get('x-payment-transaction') ??
-      paid.headers.get('x-payment-response') ??
-      '';
-
-    if (!txHash) {
-      try {
-        const settle = httpClient.getPaymentSettleResponse((name) => paid.headers.get(name));
-        txHash = settle?.transaction ?? '';
-      } catch (e) {
-        logger.warn({ err: e }, 'Could not parse PAYMENT-RESPONSE header');
-      }
-    }
-
-    return { response: paid, txHash };
+    return { response: paid, txHash: '' };
   };
 
   return httpClient;
