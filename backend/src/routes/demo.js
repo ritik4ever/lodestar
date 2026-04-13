@@ -34,12 +34,15 @@ function buildHttpClient() {
       headers: { ...(init.headers ?? {}), ...paymentHeaders },
     });
 
-    let txHash = '';
-    try {
-      const settle = httpClient.getPaymentSettleResponse((name) => paid.headers.get(name));
-      txHash = settle?.transaction ?? '';
-    } catch {
-      // PAYMENT-RESPONSE header missing or unparseable
+    // Try PAYMENT-RESPONSE header first, then fall back to x-payment-transaction
+    let txHash = paid.headers.get('x-payment-transaction') ?? '';
+    if (!txHash) {
+      try {
+        const settle = httpClient.getPaymentSettleResponse((name) => paid.headers.get(name));
+        txHash = settle?.transaction ?? '';
+      } catch {
+        // header missing or unparseable
+      }
     }
 
     return { response: paid, txHash };

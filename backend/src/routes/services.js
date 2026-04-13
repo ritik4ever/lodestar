@@ -97,6 +97,7 @@ router.get('/weather', async (req, res) => {
     }
 
     logger.info({ lat, lon }, 'Weather request fulfilled');
+    if (txHash) res.setHeader('x-payment-transaction', txHash);
     res.json(result);
   } catch (err) {
     logger.error({ err }, 'GET /demo/weather failed');
@@ -153,6 +154,7 @@ router.get('/search', async (req, res) => {
     }
 
     logger.info({ q }, 'Search request fulfilled');
+    if (searchTxHash) res.setHeader('x-payment-transaction', searchTxHash);
     res.json({ query: q, results });
   } catch (err) {
     logger.error({ err }, 'GET /demo/search failed');
