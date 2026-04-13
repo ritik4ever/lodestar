@@ -241,6 +241,15 @@ Lodestar addresses all three brief requirements:
 
 ---
 
+## Live Demo
+
+- **Frontend**: https://lodestar-ruddy.vercel.app
+- **Backend API**: https://lodestar-8na4.onrender.com
+- **Registry Contract**: `CAKZALA72JTR6BV6N44E7L52C7QU5BAYYKVKYR2DFSV2YD2A2OI6WJMP`
+- **Agents Contract**: `CCT4FUTW54K7BYZFOCBEM5MVLS42ZE25WJ3ONW7RLYXAF3HQS7ZQYA2N`
+
+---
+
 ## Testnet Transactions
 
 > Paste transaction hashes here after running the demo.
