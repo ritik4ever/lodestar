@@ -262,8 +262,11 @@ Real x402 payment transactions on Stellar testnet:
 | [2f76a396e640686b9fc426231415fd7786131f7bcc8482250ff6f65c4c28d042](https://stellar.expert/explorer/testnet/tx/2f76a396e640686b9fc426231415fd7786131f7bcc8482250ff6f65c4c28d042) | Agent credit score payment — NewAgent-Alpha |
 | [6f13b95c5470a58f96b3fc43be3a8f0834bab8249e3fc91bc0c4b6627f5b5a59](https://stellar.expert/explorer/testnet/tx/6f13b95c5470a58f96b3fc43be3a8f0834bab8249e3fc91bc0c4b6627f5b5a59) | Agent credit score payment — EstablishedAgent-Beta |
 | [bcf0b4328d8ce3bac0fcd72c88f61c3a29acfcd256e4bf07d6b82393e8f22d2e](https://stellar.expert/explorer/testnet/tx/bcf0b4328d8ce3bac0fcd72c88f61c3a29acfcd256e4bf07d6b82393e8f22d2e) | Agent credit score payment — TrustedAgent-Gamma |
+| [2e6059ffd930106a6db29d0816f504d8afba36f513836f97df68fca71c3e191b](https://stellar.expert/explorer/testnet/tx/2e6059ffd930106a6db29d0816f504d8afba36f513836f97df68fca71c3e191b) | x402 weather payment via Live Agent Demo |
+| [775e5fb93cdd2ece1cef955d34f28c64fe93eaea0bbaaa8607c5ecd937be88e0](https://stellar.expert/explorer/testnet/tx/775e5fb93cdd2ece1cef955d34f28c64fe93eaea0bbaaa8607c5ecd937be88e0) | x402 search payment via Live Agent Demo |
+| [cd95b935fa85ca938b0a3660a7255f17901a25f9c176a60fa94692fb64492beb](https://stellar.expert/explorer/testnet/tx/cd95b935fa85ca938b0a3660a7255f17901a25f9c176a60fa94692fb64492beb) | x402 weather payment — WeatherBot-Alpha agent |
 
-> Add x402 weather/search payment tx hashes here after running the demo.
+Full payment history: [GAY42L…KGU3 on Stellar Explorer](https://stellar.expert/explorer/testnet/account/GAY42LBQWN7LSFV3F6AFNEET2NVLY2JJ7KAEN4E5SNNT4RIEJLAQKGU3) — 176+ transactions
 
 ---
 
