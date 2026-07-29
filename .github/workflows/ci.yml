@@ -70,6 +70,77 @@ jobs:
         working-directory: contract/agents
         run: cargo test
 
+      - name: Build base branch WASM for size delta (PRs only)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/base_wasm
+          git fetch origin "$BASE_REF":base_branch --depth=1
+          git worktree add /tmp/base_repo base_branch
+
+          copy_single_base_wasm() {
+            local search_dir="$1"
+            local dest="$2"
+            local contract="$3"
+            local matches
+            mapfile -t matches < <(find "$search_dir" -path "*/release/*.wasm" ! -path "*/deps/*" 2>/dev/null)
+            if [ "${#matches[@]}" -eq 0 ]; then
+              echo "Warning: no base release WASM for $contract; size delta will be N/A" >&2
+              return 0
+            elif [ "${#matches[@]}" -gt 1 ]; then
+              echo "Error: expected exactly 1 base release WASM for $contract, found ${#matches[@]}: ${matches[*]}" >&2
+              return 1
+            fi
+            cp "${matches[0]}" "$dest"
+          }
+
+          if [ -d "/tmp/base_repo/contract" ]; then
+            if (cd /tmp/base_repo/contract && rustup target add wasm32v1-none && stellar contract build); then
+              copy_single_base_wasm /tmp/base_repo/contract/target /tmp/base_wasm/lodestar_registry_base.wasm lodestar_registry
+            else
+              echo "Warning: base registry contract build failed; size delta will be N/A" >&2
+            fi
+          fi
+          if [ -d "/tmp/base_repo/contract/agents" ]; then
+            if (cd /tmp/base_repo/contract/agents && rustup target add wasm32v1-none && stellar contract build); then
+              copy_single_base_wasm /tmp/base_repo/contract/agents/target /tmp/base_wasm/lodestar_agents_base.wasm lodestar_agents
+            else
+              echo "Warning: base agents contract build failed; size delta will be N/A" >&2
+            fi
+          fi
+
+      - name: Check and report contract WASM sizes
+        env:
+          MAX_WASM_SIZE_BYTES: 65536
+        run: |
+          chmod +x scripts/check-wasm-size.sh
+
+          get_single_wasm() {
+            local search_dir="$1"
+            local name="$2"
+            local matches
+            mapfile -t matches < <(find "$search_dir" -path "*/release/*.wasm" ! -path "*/deps/*" 2>/dev/null)
+            if [ "${#matches[@]}" -eq 0 ]; then
+              echo "Error: No release WASM file found for $name in $search_dir" >&2
+              exit 1
+            elif [ "${#matches[@]}" -gt 1 ]; then
+              echo "Error: Expected exactly 1 release WASM file for $name in $search_dir, found ${#matches[@]}: ${matches[*]}" >&2
+              exit 1
+            fi
+            echo "${matches[0]}"
+          }
+
+          REGISTRY_WASM=$(get_single_wasm "contract/target" "lodestar_registry")
+          AGENTS_WASM=$(get_single_wasm "contract/agents/target" "lodestar_agents")
+          BASE_REG="/tmp/base_wasm/lodestar_registry_base.wasm"
+          BASE_AGN="/tmp/base_wasm/lodestar_agents_base.wasm"
+
+          ./scripts/check-wasm-size.sh \
+            "lodestar_registry:$REGISTRY_WASM:$BASE_REG" \
+            "lodestar_agents:$AGENTS_WASM:$BASE_AGN"
+
   # ── Backend: test ─────────────────────────────────────────────────────
   backend-test:
     name: Backend test
