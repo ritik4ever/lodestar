@@ -392,19 +392,22 @@ impl LodestarAgents {
             .extend_ttl(&policy_key, MAX_TTL, MAX_TTL);
     }
 
-    // Flag an agent (admin-only)
-    pub fn flag_agent(env: Env, agent_address: Address, reason: String, caller: Address) {
-        caller.require_auth();
-
+    fn require_admin(env: &Env, caller: &Address) {
         let admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
             .expect("admin not set — call initialize() first");
 
-        if caller != admin {
+        if caller != &admin {
             panic!("unauthorized");
         }
+    }
+
+    // Flag an agent (admin-only)
+    pub fn flag_agent(env: Env, agent_address: Address, reason: String, caller: Address) {
+        caller.require_auth();
+        Self::require_admin(&env, &caller);
 
         let key = DataKey::Agent(agent_address);
         let mut agent: AgentEntry = env
@@ -448,16 +451,7 @@ impl LodestarAgents {
     // Admin deactivate agent (can deactivate any agent regardless of ownership)
     pub fn admin_deactivate_agent(env: Env, agent_address: Address, caller: Address) {
         caller.require_auth();
-
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("admin not set — call initialize() first");
-
-        if caller != admin {
-            panic!("unauthorized");
-        }
+        Self::require_admin(&env, &caller);
 
         let key = DataKey::Agent(agent_address);
         let mut agent: AgentEntry = env
@@ -484,16 +478,7 @@ impl LodestarAgents {
     // Transfer admin role to a new address (caller must be current admin)
     pub fn transfer_admin(env: Env, new_admin: Address, caller: Address) {
         caller.require_auth();
-
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("admin not set — call initialize() first");
-
-        if caller != admin {
-            panic!("unauthorized");
-        }
+        Self::require_admin(&env, &caller);
 
         env.storage()
             .persistent()
