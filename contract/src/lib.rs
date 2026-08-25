@@ -43,30 +43,14 @@ pub enum DataKey {
     // `(service_id, agent) -> last_vote_ledger` cooldown map as discrete keys so
     // each lookup touches only one entry instead of loading a growing Map.
     LastVote(u64, Address),
+    ProviderEndpoint(Address, String),
 }
 
 fn active_service_exists(env: &Env, provider: &Address, endpoint: &String) -> bool {
-    let ids: Vec<u64> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::ServiceIds)
-        .unwrap_or_else(|| vec![&env]);
-
-    let mut i = 0;
-    while i < ids.len() {
-        if let Some(entry) = env
-            .storage()
-            .persistent()
-            .get::<DataKey, ServiceEntry>(&DataKey::Service(ids.get(i).unwrap()))
-        {
-            if entry.active && entry.provider == *provider && entry.endpoint == *endpoint {
-                return true;
-            }
-        }
-        i += 1;
-    }
-
-    false
+    env.storage().persistent().has(&DataKey::ProviderEndpoint(
+        provider.clone(),
+        endpoint.clone(),
+    ))
 }
 
 #[contract]
@@ -154,6 +138,13 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Service(new_id), MAX_TTL, MAX_TTL);
+
+        let endpoint_key =
+            DataKey::ProviderEndpoint(entry.provider.clone(), entry.endpoint.clone());
+        env.storage().persistent().set(&endpoint_key, &new_id);
+        env.storage()
+            .persistent()
+            .extend_ttl(&endpoint_key, MAX_TTL, MAX_TTL);
 
         env.storage().persistent().set(&DataKey::Counter, &new_id);
         env.storage()
@@ -339,6 +330,13 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Service(id), MAX_TTL, MAX_TTL);
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::ProviderEndpoint(
+                entry.provider.clone(),
+                entry.endpoint.clone(),
+            ));
 
         // Remove from category index
         let cat_key = DataKey::ServiceIdsByCategory(entry.category.clone());
@@ -645,6 +643,23 @@ mod test {
             &String::from_str(env, "Test Service"),
             &String::from_str(env, "Test Description"),
             &String::from_str(env, "https://test.com"),
+            &String::from_str(env, "10"),
+            &String::from_str(env, "G_TEST_PAYMENT"),
+            &String::from_str(env, "compute"),
+        )
+    }
+
+    fn register_service_with_provider_and_endpoint(
+        env: &Env,
+        registry: &LodestarRegistryClient,
+        provider: &Address,
+        endpoint: &String,
+    ) -> u64 {
+        registry.register_service(
+            provider,
+            &String::from_str(env, "Test Service"),
+            &String::from_str(env, "Test Description"),
+            endpoint,
             &String::from_str(env, "10"),
             &String::from_str(env, "G_TEST_PAYMENT"),
             &String::from_str(env, "compute"),
@@ -999,6 +1014,70 @@ mod test {
                 &String::from_str(&env, "compute"),
             )
             .is_ok());
+    }
+
+    #[test]
+    fn test_register_service_rejects_duplicate_active_provider_endpoint() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let endpoint = String::from_str(&env, "https://example.com");
+
+        register_service_with_provider_and_endpoint(&env, &registry, &provider, &endpoint);
+
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Another Service"),
+                &String::from_str(&env, "Another valid description"),
+                &endpoint,
+                &String::from_str(&env, "20"),
+                &String::from_str(&env, "G_OTHER_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_deactivate_service_allows_endpoint_reregistration() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let endpoint = String::from_str(&env, "https://example.com");
+
+        let service_id =
+            register_service_with_provider_and_endpoint(&env, &registry, &provider, &endpoint);
+        registry.deactivate_service(&provider, &service_id);
+
+        let replacement_id =
+            register_service_with_provider_and_endpoint(&env, &registry, &provider, &endpoint);
+        assert_ne!(replacement_id, service_id);
+    }
+
+    #[test]
+    fn test_register_service_with_large_service_history() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let agents_id = env.register(MockAgents, ());
+        let registry_id = env.register(LodestarRegistry, (agents_id,));
+        let registry = LodestarRegistryClient::new(&env, &registry_id);
+        let provider = Address::generate(&env);
+
+        env.clone().as_contract(&registry_id, || {
+            for id in 1..=128 {
+                setup_service(&env, id, &provider, "compute", 0, true);
+            }
+            env.storage().persistent().set(&DataKey::Counter, &128u64);
+        });
+
+        let endpoint = String::from_str(&env, "https://new.example.com");
+        let service_id =
+            register_service_with_provider_and_endpoint(&env, &registry, &provider, &endpoint);
+
+        assert_eq!(service_id, 129);
+        assert_eq!(registry.get_service(&service_id).endpoint, endpoint);
     }
 
     #[test]
