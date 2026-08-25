@@ -658,6 +658,17 @@ export async function buildUnsignedRegistryTx(action, providerAddress, params = 
     return createPreparedRegistrySubmission(action, xdr);
   }
 
+  if (action === 'reactivate') {
+    const op = contract.call(
+      'reactivate_service',
+      nativeToScVal(provider, { type: 'address' }),
+      nativeToScVal(BigInt(params.id), { type: 'u64' })
+    );
+
+    const xdr = await buildUnsignedTx(op);
+    return createPreparedRegistrySubmission(action, xdr);
+  }
+
   throw new Error(`Unknown registry action: ${action}`);
 }
 
@@ -681,9 +692,11 @@ export function validatePreparedRegistrySubmission(submitToken, signedXdr) {
   }
 
   const [operation] = tx.operations;
-  const expectedFunctionName = prepared.action === 'register'
-    ? 'register_service'
-    : 'deactivate_service';
+  const expectedFunctionName = {
+    register: 'register_service',
+    deactivate: 'deactivate_service',
+    reactivate: 'reactivate_service',
+  }[prepared.action];
 
   const isRegistryInvocation = Boolean(
     operation &&

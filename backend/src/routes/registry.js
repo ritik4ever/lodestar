@@ -48,19 +48,6 @@ function normalizePriceUsdc(value) {
   return normalized;
 }
 
-/**
- * Annotate a service entry with a ttl_warning flag.
- * Returns true when the estimated remaining TTL falls below
- * SERVICE_TTL_WARNING_LEDGERS. Omits the field when currentLedger
- * is unavailable so callers treat absence as "no warning data".
- */
-function annotateTtlWarning(service, currentLedger) {
-  if (currentLedger == null) return service;
-  const expiry = service.registered_at + SERVICE_MAX_TTL;
-  const warnOnset = expiry - SERVICE_TTL_WARNING_LEDGERS;
-  return { ...service, ttl_warning: currentLedger >= warnOnset };
-}
-
 function parsePositiveSafeInteger(value) {
   if (typeof value === "number") {
     return Number.isSafeInteger(value) && value > 0 ? value : null;
@@ -425,6 +412,31 @@ router.post("/registry/prepare-deactivate", writeRateLimiter(), async (req, res)
       return res.status(status).json({ error: err.message, code: err.code });
     }
     logger.error({ err }, "POST /api/registry/prepare-deactivate failed");
+    res.status(500).json({ error: "Failed to build transaction", code: "BUILD_TX_ERROR" });
+  }
+});
+
+router.post("/registry/prepare-reactivate", writeRateLimiter(), async (req, res) => {
+  try {
+    const { providerAddress, id } = req.body ?? {};
+    if (!isValidStellarAddress(providerAddress)) {
+      return res.status(400).json({ error: "`providerAddress` must be a valid Stellar address", code: "INVALID_BODY" });
+    }
+
+    const parsedId = parsePositiveSafeInteger(id);
+    if (parsedId == null) {
+      return res.status(400).json({ error: "`id` must be a positive integer", code: "INVALID_BODY" });
+    }
+
+    const prepared = await buildUnsignedRegistryTx("reactivate", providerAddress, { id: parsedId });
+    logger.info({ providerAddress, id: parsedId }, "Built unsigned registry reactivation tx");
+    res.json(prepared);
+  } catch (err) {
+    if (err instanceof ContractError) {
+      const status = err.code === "TRANSACTION_TIMEOUT" ? 504 : 400;
+      return res.status(status).json({ error: err.message, code: err.code });
+    }
+    logger.error({ err }, "POST /api/registry/prepare-reactivate failed");
     res.status(500).json({ error: "Failed to build transaction", code: "BUILD_TX_ERROR" });
   }
 });
