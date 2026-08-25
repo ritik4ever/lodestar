@@ -186,6 +186,23 @@ impl LodestarRegistry {
             MAX_TTL,
         );
 
+        env.events().publish(
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "registered"),
+                new_id,
+            ),
+            (
+                entry.provider.clone(),
+                entry.name.clone(),
+                entry.description.clone(),
+                entry.endpoint.clone(),
+                entry.category.clone(),
+                entry.price_usdc.clone(),
+                entry.pay_to.clone(),
+            ),
+        );
+
         new_id
     }
 
@@ -316,6 +333,15 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&vote_key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "reputation"),
+                id,
+            ),
+            (caller, positive, entry.reputation),
+        );
     }
 
     pub fn deactivate_service(env: Env, provider: Address, id: u64) {
@@ -357,6 +383,15 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&cat_key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "deactivated"),
+                id,
+            ),
+            (provider,),
+        );
     }
 
     pub fn get_service_count(env: Env) -> u64 {
@@ -375,8 +410,8 @@ impl LodestarRegistry {
 mod test {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
-        Address, IntoVal, String,
+        testutils::{Address as _, Events, Ledger as _, MockAuth, MockAuthInvoke},
+        Address, FromVal, IntoVal, String,
     };
 
     fn setup_service(
@@ -649,6 +684,117 @@ mod test {
             &String::from_str(env, "G_TEST_PAYMENT"),
             &String::from_str(env, "compute"),
         )
+    }
+
+    #[test]
+    fn test_register_service_emits_registered_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let name = String::from_str(&env, "Test Service");
+        let description = String::from_str(&env, "Test Description");
+        let endpoint = String::from_str(&env, "https://test.com");
+        let price = String::from_str(&env, "10");
+        let pay_to = String::from_str(&env, "G_TEST_PAYMENT");
+        let category = String::from_str(&env, "compute");
+
+        let id = registry.register_service(
+            &provider,
+            &name,
+            &description,
+            &endpoint,
+            &price,
+            &pay_to,
+            &category,
+        );
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "registered"),
+                id,
+            )
+                .into_val(&env)
+        );
+        assert_eq!(
+            <(Address, String, String, String, String, String, String)>::from_val(&env, &event.2),
+            (
+                provider,
+                name,
+                description,
+                endpoint,
+                category,
+                price,
+                pay_to
+            )
+        );
+    }
+
+    #[test]
+    fn test_update_reputation_emits_reputation_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, agents) = deploy_registry(&env);
+        let id = register_a_service(&env, &registry);
+        let agent = Address::generate(&env);
+        agents.set_registered(&agent, &true);
+
+        registry.update_reputation(&id, &true, &agent);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "reputation"),
+                id,
+            )
+                .into_val(&env)
+        );
+        assert_eq!(
+            <(Address, bool, i32)>::from_val(&env, &event.2),
+            (agent, true, 1i32)
+        );
+    }
+
+    #[test]
+    fn test_deactivate_service_emits_deactivated_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let id = registry.register_service(
+            &provider,
+            &String::from_str(&env, "Test Service"),
+            &String::from_str(&env, "Test Description"),
+            &String::from_str(&env, "https://test.com"),
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_TEST_PAYMENT"),
+            &String::from_str(&env, "compute"),
+        );
+
+        registry.deactivate_service(&provider, &id);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "deactivated"),
+                id,
+            )
+                .into_val(&env)
+        );
+        assert_eq!(<(Address,)>::from_val(&env, &event.2), (provider,));
     }
 
     #[test]
