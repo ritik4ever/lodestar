@@ -1,7 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, vec, Address, Env, IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, vec, Address, Env, IntoVal, String,
+    Symbol, Vec,
 };
 
 const MAX_TTL: u32 = 3110400;
@@ -13,6 +14,21 @@ const VOTE_COOLDOWN_LEDGERS: u64 = 720;
 
 const MAX_REPUTATION: i32 = 10_000;
 const MIN_REPUTATION: i32 = -10_000;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum RegistryError {
+    InvalidName = 1,
+    InvalidDescription = 2,
+    DuplicateActiveService = 3,
+    ServiceNotFound = 4,
+    AgentsContractNotConfigured = 5,
+    CallerNotRegisteredAgent = 6,
+    ReputationVoteCooldown = 7,
+    ProviderMismatch = 8,
+    CategoryIndexNotFound = 9,
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -105,24 +121,18 @@ impl LodestarRegistry {
         price_usdc: String,
         pay_to: String,
         category: String,
-    ) -> u64 {
+    ) -> Result<u64, RegistryError> {
         provider.require_auth();
 
-        assert!(name.len() >= 3, "name must be 3-64 characters");
-        assert!(name.len() <= 64, "name must be 3-64 characters");
-        assert!(
-            description.len() >= 10,
-            "description must be 10-256 characters"
-        );
-        assert!(
-            description.len() <= 256,
-            "description must be 10-256 characters"
-        );
-
-        assert!(
-            !active_service_exists(&env, &provider, &endpoint),
-            "Active service with same provider and endpoint already exists"
-        );
+        if name.len() < 3 || name.len() > 64 {
+            return Err(RegistryError::InvalidName);
+        }
+        if description.len() < 10 || description.len() > 256 {
+            return Err(RegistryError::InvalidDescription);
+        }
+        if active_service_exists(&env, &provider, &endpoint) {
+            return Err(RegistryError::DuplicateActiveService);
+        }
 
         let counter: u64 = env
             .storage()
@@ -186,14 +196,14 @@ impl LodestarRegistry {
             MAX_TTL,
         );
 
-        new_id
+        Ok(new_id)
     }
 
-    pub fn get_service(env: Env, id: u64) -> ServiceEntry {
+    pub fn get_service(env: Env, id: u64) -> Result<ServiceEntry, RegistryError> {
         env.storage()
             .persistent()
             .get(&DataKey::Service(id))
-            .expect("Service not found")
+            .ok_or(RegistryError::ServiceNotFound)
     }
 
     pub fn list_services(
@@ -264,7 +274,12 @@ impl LodestarRegistry {
     /// 3. A per-(service, agent) cooldown of `VOTE_COOLDOWN_LEDGERS` rate-limits
     ///    repeat votes, preventing a single identity from inflating or tanking a
     ///    score in a tight loop.
-    pub fn update_reputation(env: Env, id: u64, positive: bool, caller: Address) {
+    pub fn update_reputation(
+        env: Env,
+        id: u64,
+        positive: bool,
+        caller: Address,
+    ) -> Result<(), RegistryError> {
         caller.require_auth();
 
         // ── 1. Caller must be a registered agent ──────────────────────────────
@@ -272,7 +287,7 @@ impl LodestarRegistry {
             .storage()
             .persistent()
             .get(&DataKey::AgentsContract)
-            .expect("agents contract not configured at deployment");
+            .ok_or(RegistryError::AgentsContractNotConfigured)?;
 
         let registered: bool = env.invoke_contract(
             &agents_contract,
@@ -280,25 +295,25 @@ impl LodestarRegistry {
             vec![&env, caller.clone().into_val(&env)],
         );
         if !registered {
-            panic!("unauthorized: caller is not a registered agent");
+            return Err(RegistryError::CallerNotRegisteredAgent);
         }
+
+        let mut entry: ServiceEntry = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Service(id))
+            .ok_or(RegistryError::ServiceNotFound)?;
 
         // ── 2. Per-(service, agent) cooldown ──────────────────────────────────
         let now = env.ledger().sequence() as u64;
         let vote_key = DataKey::LastVote(id, caller.clone());
         if let Some(last_vote) = env.storage().persistent().get::<DataKey, u64>(&vote_key) {
             if now < last_vote + VOTE_COOLDOWN_LEDGERS {
-                panic!("cooldown: this agent has voted on this service too recently");
+                return Err(RegistryError::ReputationVoteCooldown);
             }
         }
 
         // ── 3. Apply the vote ─────────────────────────────────────────────────
-        let mut entry: ServiceEntry = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Service(id))
-            .expect("Service not found");
-
         if positive {
             entry.reputation = (entry.reputation + 1).min(MAX_REPUTATION);
         } else {
@@ -316,21 +331,22 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&vote_key, MAX_TTL, MAX_TTL);
+
+        Ok(())
     }
 
-    pub fn deactivate_service(env: Env, provider: Address, id: u64) {
+    pub fn deactivate_service(env: Env, provider: Address, id: u64) -> Result<(), RegistryError> {
         provider.require_auth();
 
         let mut entry: ServiceEntry = env
             .storage()
             .persistent()
             .get(&DataKey::Service(id))
-            .expect("Service not found");
+            .ok_or(RegistryError::ServiceNotFound)?;
 
-        assert!(
-            provider == entry.provider,
-            "Only the provider can deactivate this service"
-        );
+        if provider != entry.provider {
+            return Err(RegistryError::ProviderMismatch);
+        }
 
         entry.active = false;
         env.storage()
@@ -346,7 +362,7 @@ impl LodestarRegistry {
             .storage()
             .persistent()
             .get(&cat_key)
-            .expect("Category index not found");
+            .ok_or(RegistryError::CategoryIndexNotFound)?;
         let mut updated: Vec<u64> = vec![&env];
         for cid in cat_ids.iter() {
             if cid != id {
@@ -357,6 +373,8 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&cat_key, MAX_TTL, MAX_TTL);
+
+        Ok(())
     }
 
     pub fn get_service_count(env: Env) -> u64 {
@@ -628,13 +646,24 @@ mod test {
         }
     }
 
-    fn deploy_registry(env: &Env) -> (LodestarRegistryClient<'static>, MockAgentsClient<'static>) {
+    fn deploy_registry_with_id(
+        env: &Env,
+    ) -> (
+        Address,
+        LodestarRegistryClient<'static>,
+        MockAgentsClient<'static>,
+    ) {
         let agents_id = env.register(MockAgents, ());
         let agents = MockAgentsClient::new(env, &agents_id);
 
         let registry_id = env.register(LodestarRegistry, (agents_id.clone(),));
         let registry = LodestarRegistryClient::new(env, &registry_id);
 
+        (registry_id, registry, agents)
+    }
+
+    fn deploy_registry(env: &Env) -> (LodestarRegistryClient<'static>, MockAgentsClient<'static>) {
+        let (_, registry, agents) = deploy_registry_with_id(env);
         (registry, agents)
     }
 
@@ -704,14 +733,18 @@ mod test {
     fn test_update_reputation_requires_registered_agent() {
         let env = Env::default();
         env.mock_all_auths();
-        let (registry, agents) = deploy_registry(&env);
+        let (registry_id, registry, agents) = deploy_registry_with_id(&env);
         let id = register_a_service(&env, &registry);
 
         // An address with no agent record cannot vote.
         let stranger = Address::generate(&env);
-        assert!(registry
-            .try_update_reputation(&id, &true, &stranger)
-            .is_err());
+        let result = env.clone().as_contract(&registry_id, || {
+            LodestarRegistry::update_reputation(env.clone(), id, true, stranger.clone())
+        });
+        assert!(matches!(
+            result,
+            Err(RegistryError::CallerNotRegisteredAgent)
+        ));
         assert_eq!(registry.get_service(&id).reputation, 0);
 
         // Once registered, the same address may vote.
@@ -744,7 +777,7 @@ mod test {
     fn test_update_reputation_cooldown_blocks_rapid_repeat_votes() {
         let env = Env::default();
         env.mock_all_auths();
-        let (registry, agents) = deploy_registry(&env);
+        let (registry_id, registry, agents) = deploy_registry_with_id(&env);
         let id = register_a_service(&env, &registry);
 
         let agent = Address::generate(&env);
@@ -755,7 +788,10 @@ mod test {
         assert_eq!(registry.get_service(&id).reputation, 1);
 
         // A second vote within the cooldown window is rejected — no inflation.
-        assert!(registry.try_update_reputation(&id, &true, &agent).is_err());
+        let result = env.clone().as_contract(&registry_id, || {
+            LodestarRegistry::update_reputation(env.clone(), id, true, agent.clone())
+        });
+        assert!(matches!(result, Err(RegistryError::ReputationVoteCooldown)));
         assert_eq!(registry.get_service(&id).reputation, 1);
 
         // After the cooldown elapses, voting is allowed again.
@@ -882,8 +918,8 @@ mod test {
         let (registry, _agents) = deploy_registry(&env);
         let provider = Address::generate(&env);
 
-        assert!(registry
-            .try_register_service(
+        assert!(matches!(
+            registry.try_register_service(
                 &provider,
                 &String::from_str(&env, "AB"),
                 &String::from_str(&env, "Valid description long enough"),
@@ -891,8 +927,9 @@ mod test {
                 &String::from_str(&env, "10"),
                 &String::from_str(&env, "G_PAYMENT"),
                 &String::from_str(&env, "compute"),
-            )
-            .is_err());
+            ),
+            Err(Ok(RegistryError::InvalidName))
+        ));
     }
 
     #[test]
@@ -903,8 +940,8 @@ mod test {
         let provider = Address::generate(&env);
 
         let long_name = "A".repeat(65);
-        assert!(registry
-            .try_register_service(
+        assert!(matches!(
+            registry.try_register_service(
                 &provider,
                 &String::from_str(&env, &long_name),
                 &String::from_str(&env, "Valid description long enough"),
@@ -912,8 +949,9 @@ mod test {
                 &String::from_str(&env, "10"),
                 &String::from_str(&env, "G_PAYMENT"),
                 &String::from_str(&env, "compute"),
-            )
-            .is_err());
+            ),
+            Err(Ok(RegistryError::InvalidName))
+        ));
     }
 
     #[test]
@@ -923,8 +961,8 @@ mod test {
         let (registry, _agents) = deploy_registry(&env);
         let provider = Address::generate(&env);
 
-        assert!(registry
-            .try_register_service(
+        assert!(matches!(
+            registry.try_register_service(
                 &provider,
                 &String::from_str(&env, "Valid Name"),
                 &String::from_str(&env, "123456789"),
@@ -932,8 +970,9 @@ mod test {
                 &String::from_str(&env, "10"),
                 &String::from_str(&env, "G_PAYMENT"),
                 &String::from_str(&env, "compute"),
-            )
-            .is_err());
+            ),
+            Err(Ok(RegistryError::InvalidDescription))
+        ));
     }
 
     #[test]
@@ -944,8 +983,8 @@ mod test {
         let provider = Address::generate(&env);
 
         let long_desc = "A".repeat(257);
-        assert!(registry
-            .try_register_service(
+        assert!(matches!(
+            registry.try_register_service(
                 &provider,
                 &String::from_str(&env, "Valid Name"),
                 &String::from_str(&env, &long_desc),
@@ -953,8 +992,9 @@ mod test {
                 &String::from_str(&env, "10"),
                 &String::from_str(&env, "G_PAYMENT"),
                 &String::from_str(&env, "compute"),
-            )
-            .is_err());
+            ),
+            Err(Ok(RegistryError::InvalidDescription))
+        ));
     }
 
     #[test]
@@ -975,6 +1015,7 @@ mod test {
                 &String::from_str(&env, "G_PAYMENT"),
                 &String::from_str(&env, "compute"),
             )
+            .unwrap()
             .is_ok());
     }
 
@@ -998,7 +1039,139 @@ mod test {
                 &String::from_str(&env, "G_PAYMENT"),
                 &String::from_str(&env, "compute"),
             )
+            .unwrap()
             .is_ok());
+    }
+
+    #[test]
+    fn test_get_service_returns_typed_not_found_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry_id, _registry, _agents) = deploy_registry_with_id(&env);
+
+        let result = env.clone().as_contract(&registry_id, || {
+            LodestarRegistry::get_service(env.clone(), 999)
+        });
+        assert!(matches!(result, Err(RegistryError::ServiceNotFound)));
+    }
+
+    #[test]
+    fn test_register_service_returns_typed_duplicate_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let endpoint = String::from_str(&env, "https://example.com");
+
+        registry.register_service(
+            &provider,
+            &String::from_str(&env, "First Service"),
+            &String::from_str(&env, "Valid description long enough"),
+            &endpoint,
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_PAYMENT"),
+            &String::from_str(&env, "compute"),
+        );
+
+        assert!(matches!(
+            registry.try_register_service(
+                &provider,
+                &String::from_str(&env, "Second Service"),
+                &String::from_str(&env, "Another valid description"),
+                &endpoint,
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            ),
+            Err(Ok(RegistryError::DuplicateActiveService))
+        ));
+    }
+
+    #[test]
+    fn test_update_reputation_returns_typed_missing_service_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry_id, _registry, agents) = deploy_registry_with_id(&env);
+        let agent = Address::generate(&env);
+        agents.set_registered(&agent, &true);
+
+        let result = env.clone().as_contract(&registry_id, || {
+            LodestarRegistry::update_reputation(env.clone(), 999u64, true, agent.clone())
+        });
+        assert!(matches!(result, Err(RegistryError::ServiceNotFound)));
+    }
+
+    #[test]
+    fn test_update_reputation_returns_typed_missing_agents_config_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let agents_id = env.register(MockAgents, ());
+        let registry_id = env.register(LodestarRegistry, (agents_id,));
+        let provider = Address::generate(&env);
+        let agent = Address::generate(&env);
+
+        env.clone().as_contract(&registry_id, || {
+            setup_service(&env, 1, &provider, "compute", 0, true);
+            env.storage().persistent().remove(&DataKey::AgentsContract);
+        });
+
+        let result = env.clone().as_contract(&registry_id, || {
+            LodestarRegistry::update_reputation(env.clone(), 1u64, true, agent.clone())
+        });
+        assert!(matches!(
+            result,
+            Err(RegistryError::AgentsContractNotConfigured)
+        ));
+    }
+
+    #[test]
+    fn test_deactivate_service_returns_typed_provider_mismatch_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let agents_id = env.register(MockAgents, ());
+        let registry_id = env.register(LodestarRegistry, (agents_id,));
+        let provider = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        env.clone().as_contract(&registry_id, || {
+            setup_service(&env, 1, &provider, "compute", 0, true);
+        });
+
+        let result = env.clone().as_contract(&registry_id, || {
+            LodestarRegistry::deactivate_service(env.clone(), other.clone(), 1u64)
+        });
+        assert!(matches!(result, Err(RegistryError::ProviderMismatch)));
+    }
+
+    #[test]
+    fn test_deactivate_service_returns_typed_missing_category_index_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let agents_id = env.register(MockAgents, ());
+        let registry_id = env.register(LodestarRegistry, (agents_id,));
+        let provider = Address::generate(&env);
+        let entry = ServiceEntry {
+            id: 1,
+            name: String::from_str(&env, "Test Service"),
+            description: String::from_str(&env, "Valid description"),
+            endpoint: String::from_str(&env, "https://example.com"),
+            price_usdc: String::from_str(&env, "10"),
+            pay_to: String::from_str(&env, "G_PAYMENT"),
+            category: String::from_str(&env, "compute"),
+            provider: provider.clone(),
+            reputation: 0,
+            active: true,
+            registered_at: env.ledger().sequence() as u64,
+        };
+
+        env.clone().as_contract(&registry_id, || {
+            env.storage().persistent().set(&DataKey::Service(1), &entry);
+        });
+
+        let result = env.clone().as_contract(&registry_id, || {
+            LodestarRegistry::deactivate_service(env.clone(), provider.clone(), 1u64)
+        });
+        assert!(matches!(result, Err(RegistryError::CategoryIndexNotFound)));
     }
 
     #[test]
