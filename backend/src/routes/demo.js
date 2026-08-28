@@ -46,6 +46,13 @@ function buildHttpClient() {
 }
 
 router.post('/demo-run', async (req, res) => {
+  // Wire the abort plumbing once, up front, so a client disconnect propagates
+  // through the WHOLE handler — including the waitForActivityTxHash polling
+  // phase — and not just the fetchWithTx call.
+  const abortController = new AbortController();
+  const onClose = () => abortController.abort();
+  req.on('close', onClose);
+
   try {
     const { serviceId, category } = req.body;
 
@@ -83,12 +90,7 @@ router.post('/demo-run', async (req, res) => {
     const httpClient = buildHttpClient();
     const activityCountBefore = getActivityFeed().length;
 
-    const abortController = new AbortController();
-    const onClose = () => abortController.abort();
-    req.on('close', onClose);
-
     const { response, txHash: fetchedTxHash } = await httpClient.fetchWithTx(finalEndpointUrl, { signal: abortController.signal });
-    req.removeListener('close', onClose);
 
     if (!response.ok) {
       throw new Error(`Service responded with ${response.status}`);
@@ -115,6 +117,7 @@ router.post('/demo-run', async (req, res) => {
         maxWaitMs: config.demoRun.pollMaxWaitMs,
         initialDelayMs: config.demoRun.pollInitialDelayMs,
         maxDelayMs: config.demoRun.pollMaxDelayMs,
+        signal: abortController.signal,
       },
       (entry) => entry.demoRunId === demoRunId,
     ));
@@ -139,6 +142,8 @@ router.post('/demo-run', async (req, res) => {
     }
     logger.error({ err }, 'POST /api/demo-run failed');
     res.status(500).json({ error: err instanceof Error ? err.message : 'Demo run failed', code: 'DEMO_ERROR' });
+  } finally {
+    req.removeListener('close', onClose);
   }
 });
 

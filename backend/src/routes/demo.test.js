@@ -295,6 +295,39 @@ describe('POST /api/demo-run — dataValid flag (issue #63)', () => {
   });
 });
 
+describe('POST /api/demo-run — client disconnect during polling (issue #531)', () => {
+  it('passes an AbortSignal in the options arg to waitForActivityTxHash', async () => {
+    mockGetService.mockResolvedValueOnce(makeService());
+    // txHash absent on the fetch response → route falls through to polling.
+    mockFetch({ latitude: 40.71, temperature_c: 20, wind_speed_kmh: 5, weather_code: 1, time: 'T' });
+
+    const res = await request(app)
+      .post('/api/demo-run')
+      .send({ serviceId: 1, category: 'weather' });
+
+    expect(res.status).toBe(200);
+    expect(mockWaitForActivityTxHash).toHaveBeenCalledTimes(1);
+    const options = mockWaitForActivityTxHash.mock.calls[0][2];
+    expect(options).toMatchObject({ signal: expect.any(AbortSignal) });
+  });
+
+  it('responds 499 when the poll aborts because the client disconnected', async () => {
+    mockGetService.mockResolvedValueOnce(makeService());
+    mockFetch({ latitude: 40.71, temperature_c: 20, wind_speed_kmh: 5, weather_code: 1, time: 'T' });
+    // Simulate the abort surfacing from the polling phase.
+    mockWaitForActivityTxHash.mockRejectedValueOnce(
+      Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }),
+    );
+
+    const res = await request(app)
+      .post('/api/demo-run')
+      .send({ serviceId: 1, category: 'weather' });
+
+    expect(res.status).toBe(499);
+    expect(res.body.code).toBe('CANCELLED');
+  });
+});
+
 describe('POST /api/demo-run — response shape', () => {
   it('includes data, txHash, and dataValid in a successful response', async () => {
     mockGetService.mockResolvedValueOnce(makeService());

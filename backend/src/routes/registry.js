@@ -372,6 +372,9 @@ router.post("/registry/prepare-register", writeRateLimiter(), async (req, res) =
     if (typeof endpoint !== "string" || !endpoint.startsWith("https://")) {
       return res.status(400).json({ error: "`endpoint` must start with https://", code: "INVALID_BODY" });
     }
+    if (endpoint.trim().length > 256) {
+      return res.status(400).json({ error: "`endpoint` must be at most 256 characters", code: "INVALID_BODY" });
+    }
     if (!SERVICE_CATEGORIES.has(category)) {
       return res.status(400).json({ error: "`category` is invalid", code: "INVALID_BODY" });
     }
