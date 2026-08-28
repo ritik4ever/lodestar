@@ -16,6 +16,10 @@ const TEST_MAX_TTL: u32 = 100_000_000;
 const MAX_SCORE: i32 = 1_000;
 const INITIAL_SCORE: i32 = 100;
 const SCORE_SUCCESS: i32 = 10;
+// Reduced increment earned by agents whose score is below their policy's
+// `min_score_to_earn`. Keeping it above zero guarantees a way back: without it
+// failures (-25) would ratchet a low-scoring agent down permanently.
+const SCORE_SUCCESS_BELOW_THRESHOLD: i32 = 2;
 const SCORE_FAILURE: i32 = -25;
 const FLAG_PENALTY: i32 = -200;
 
@@ -74,10 +78,10 @@ pub struct SpendingPolicy {
     pub max_per_tx_stroops: i128,
     pub max_per_day_stroops: i128,
     pub allowed_categories: Vec<String>,
-    /// Minimum agent score required to earn score increments from successful
-    /// payments. Agents below this threshold still have payment stats recorded
-    /// (total_payments, successful_payments) but their score will not increase
-    /// until they reach this score. Set to 0 to allow all agents to earn score.
+    /// Minimum agent score required to earn the full score increment from
+    /// successful payments. Agents below this threshold still earn the reduced
+    /// increment (`SCORE_SUCCESS_BELOW_THRESHOLD`) so they always have a path
+    /// back above it. Set to 0 to let all agents earn the full increment.
     pub min_score_to_earn: i32,
     pub daily_spent_stroops: i128,
     pub last_reset_ledger: u64,
@@ -88,6 +92,7 @@ pub struct SpendingPolicy {
 pub struct ScoringConfig {
     pub initial_score: i32,
     pub score_success: i32,
+    pub score_success_below_threshold: i32,
     pub score_failure: i32,
     pub flag_penalty: i32,
 }
@@ -358,11 +363,16 @@ impl LodestarAgents {
 
         if success {
             agent.successful_payments += 1;
-            // Enforce min_score_to_earn: agents below the threshold do not gain
-            // score from successful payments, though payment stats are still recorded.
-            if agent.score >= policy.min_score_to_earn {
-                agent.score = (agent.score + SCORE_SUCCESS).min(MAX_SCORE);
-            }
+            // Enforce min_score_to_earn: agents at or above the threshold earn the
+            // full increment, agents below it earn a reduced one. The reduced rate
+            // is never zero so an agent that drops below the threshold can always
+            // work its way back up instead of being trapped by failures alone.
+            let increment = if agent.score >= policy.min_score_to_earn {
+                SCORE_SUCCESS
+            } else {
+                SCORE_SUCCESS_BELOW_THRESHOLD
+            };
+            agent.score = (agent.score + increment).min(MAX_SCORE);
         } else {
             agent.failed_payments += 1;
             agent.score = (agent.score + SCORE_FAILURE).max(0);
@@ -616,6 +626,7 @@ impl LodestarAgents {
         ScoringConfig {
             initial_score: INITIAL_SCORE,
             score_success: SCORE_SUCCESS,
+            score_success_below_threshold: SCORE_SUCCESS_BELOW_THRESHOLD,
             score_failure: SCORE_FAILURE,
             flag_penalty: FLAG_PENALTY,
         }
@@ -634,8 +645,23 @@ mod test {
 
     #[contractimpl]
     impl MockRegistry {
+        // Pin the provider returned by get_service, so tests that need to satisfy
+        // record_payment's "caller must be the service provider" check can do so.
+        pub fn set_provider(env: Env, provider: Address) {
+            let key = Symbol::new(&env, "provider");
+            env.storage().persistent().set(&key, &provider);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TEST_MAX_TTL, TEST_MAX_TTL);
+        }
+
         pub fn get_service(env: Env, id: u64) -> ServiceEntry {
-            // Return a mock service with a generated provider
+            // Use the pinned provider when one was set, otherwise generate one
+            let provider: Address = env
+                .storage()
+                .persistent()
+                .get(&Symbol::new(&env, "provider"))
+                .unwrap_or_else(|| Address::generate(&env));
             ServiceEntry {
                 id,
                 name: String::from_str(&env, "Test Service"),
@@ -643,7 +669,7 @@ mod test {
                 endpoint: String::from_str(&env, "http://test.com"),
                 price_usdc: String::from_str(&env, "100"),
                 category: String::from_str(&env, "test"),
-                provider: Address::generate(&env),
+                provider,
                 reputation: 100,
                 active: true,
                 registered_at: env.ledger().sequence() as u64,
@@ -674,6 +700,21 @@ mod test {
         client.init(&registry_id);
         
         (contract_id, admin)
+    }
+
+    /// Like `setup_with_registry`, but wires a registry whose service provider is
+    /// known, so tests can call `record_payment` as that provider.
+    /// Returns (contract_id, admin, provider).
+    fn setup_with_provider_registry(env: &Env) -> (Address, Address, Address) {
+        let registry_id = env.register(MockRegistry, ());
+        let provider = Address::generate(env);
+        MockRegistryClient::new(env, &registry_id).set_provider(&provider);
+
+        let admin = Address::generate(env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        LodestarAgentsClient::new(env, &contract_id).init(&registry_id);
+
+        (contract_id, admin, provider)
     }
 
     #[test]
@@ -882,8 +923,134 @@ mod test {
         let config = client.get_scoring_config();
         assert_eq!(config.initial_score, INITIAL_SCORE);
         assert_eq!(config.score_success, SCORE_SUCCESS);
+        assert_eq!(
+            config.score_success_below_threshold,
+            SCORE_SUCCESS_BELOW_THRESHOLD
+        );
         assert_eq!(config.score_failure, SCORE_FAILURE);
         assert_eq!(config.flag_penalty, FLAG_PENALTY);
+    }
+
+    /// The reduced below-threshold rate must be positive, otherwise an agent that
+    /// falls under `min_score_to_earn` could never climb back out.
+    #[test]
+    fn test_below_threshold_rate_is_positive() {
+        assert!(
+            SCORE_SUCCESS_BELOW_THRESHOLD > 0,
+            "recovery rate must be positive so a low score is never a dead end"
+        );
+        assert!(
+            SCORE_SUCCESS_BELOW_THRESHOLD < SCORE_SUCCESS,
+            "recovery rate should be slower than the full rate"
+        );
+    }
+
+    /// An agent driven below `min_score_to_earn` by failures can still recover:
+    /// successes below the threshold earn the reduced increment, and once the
+    /// agent is back at or above the threshold the full increment applies again.
+    #[test]
+    fn test_agent_below_min_score_to_earn_can_recover() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin, provider) = setup_with_provider_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        // Threshold of 60 — the agent starts at 100, above it.
+        let threshold: i32 = 60;
+        client.update_policy(
+            &agent_addr,
+            &1_000i128,
+            &1_000_000i128,
+            &vec![&env],
+            &threshold,
+            &owner,
+        );
+
+        // Three failures drop the agent below the threshold: 100 → 75 → 50 → 25.
+        for _ in 0..3 {
+            client.record_payment(&agent_addr, &1u64, &0i128, &false, &provider);
+        }
+        assert_eq!(client.get_score(&agent_addr), 25);
+        assert!(client.get_score(&agent_addr) < threshold);
+
+        // A success below the threshold still earns — the ratchet turns both ways.
+        client.record_payment(&agent_addr, &1u64, &0i128, &true, &provider);
+        assert_eq!(
+            client.get_score(&agent_addr),
+            25 + SCORE_SUCCESS_BELOW_THRESHOLD,
+            "successes below the threshold must earn the reduced increment"
+        );
+
+        // 17 more successes at the reduced rate: 27 + 17*2 = 61, back over the line.
+        for _ in 0..17 {
+            client.record_payment(&agent_addr, &1u64, &0i128, &true, &provider);
+        }
+        assert_eq!(client.get_score(&agent_addr), 61);
+        assert!(
+            client.get_score(&agent_addr) >= threshold,
+            "agent must be able to climb back to the threshold"
+        );
+
+        // At/above the threshold the full increment applies again.
+        client.record_payment(&agent_addr, &1u64, &0i128, &true, &provider);
+        assert_eq!(
+            client.get_score(&agent_addr),
+            61 + SCORE_SUCCESS,
+            "at or above the threshold the full increment applies"
+        );
+    }
+
+    /// An agent whose threshold is above the starting score is not dead on
+    /// arrival — it earns at the reduced rate from its very first payment.
+    #[test]
+    fn test_agent_starting_below_threshold_still_earns() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin, provider) = setup_with_provider_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        // Threshold above the 100-point starting score.
+        client.update_policy(
+            &agent_addr,
+            &1_000i128,
+            &1_000_000i128,
+            &vec![&env],
+            &500,
+            &owner,
+        );
+
+        client.record_payment(&agent_addr, &1u64, &0i128, &true, &provider);
+
+        let agent = client.get_agent(&agent_addr).unwrap();
+        assert_eq!(agent.score, INITIAL_SCORE + SCORE_SUCCESS_BELOW_THRESHOLD);
+        assert_eq!(agent.successful_payments, 1);
+        assert_eq!(agent.total_payments, 1);
+    }
+
+    /// With the default policy (`min_score_to_earn` = 0) successes earn the full
+    /// increment, unchanged by the recovery path.
+    #[test]
+    fn test_record_payment_full_rate_at_default_policy() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin, provider) = setup_with_provider_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        client.record_payment(&agent_addr, &1u64, &0i128, &true, &provider);
+
+        assert_eq!(client.get_score(&agent_addr), INITIAL_SCORE + SCORE_SUCCESS);
     }
 
     /// Seed a non-zero `daily_spent_stroops` directly into contract storage.

@@ -228,6 +228,26 @@ Every agent is anonymous. Services cannot distinguish a reliable agent from a br
 - Services can set minimum score requirements
 - Spending policies are enforced at contract level — cannot be bypassed
 
+### Score Recovery
+
+Each spending policy carries a `min_score_to_earn` threshold. It controls **how
+fast** an agent earns, never **whether** it can earn:
+
+| Agent score | Increment per successful payment |
+|-------------|----------------------------------|
+| ≥ `min_score_to_earn` | **+10** (full rate) |
+| < `min_score_to_earn` | **+2** (reduced rate) |
+
+Failures always cost −25, so a run of failures can push an agent below the
+threshold — but the reduced rate is deliberately non-zero, so successful payments
+always move the score back up. An agent that drops to 25 with a threshold of 60
+climbs back over it in 18 successful payments, and earns at the full rate again
+from there. Setting `min_score_to_earn` to 0 (the default for new agents) gives
+every agent the full rate.
+
+The exact values are readable on-chain via `get_scoring_config`, which returns
+`score_success` (+10) and `score_success_below_threshold` (+2).
+
 ### Score Tiers
 
 | Score | Tier | Access |
