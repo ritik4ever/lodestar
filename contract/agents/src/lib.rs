@@ -413,9 +413,11 @@ impl LodestarAgents {
             .get(&key)
             .expect("agent not found");
 
+        if !agent.flagged {
+            agent.score = (agent.score + FLAG_PENALTY).max(0);
+        }
         agent.flagged = true;
         agent.flag_reason = reason;
-        agent.score = (agent.score + FLAG_PENALTY).max(0);
 
         env.storage().persistent().set(&key, &agent);
         env.storage()
@@ -742,6 +744,62 @@ mod test {
             String::from_str(&env, "violation of terms")
         );
         assert!(agent.score < INITIAL_SCORE);
+    }
+
+    #[test]
+    fn test_flag_agent_idempotent_score_penalty_once() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        // Raise score so repeated penalties would be observable if they stacked.
+        let agent_key = DataKey::Agent(agent_addr.clone());
+        env.as_contract(&contract_id, || {
+            let mut agent: AgentEntry = env
+                .storage()
+                .persistent()
+                .get(&agent_key)
+                .expect("agent not found");
+            agent.score = MAX_SCORE;
+            env.storage().persistent().set(&agent_key, &agent);
+            env.storage()
+                .persistent()
+                .extend_ttl(&agent_key, TEST_MAX_TTL, TEST_MAX_TTL);
+        });
+
+        client.flag_agent(
+            &agent_addr,
+            &String::from_str(&env, "first flag"),
+            &admin,
+        );
+        let score_after_first = client.get_agent(&agent_addr).unwrap().score;
+        assert_eq!(score_after_first, MAX_SCORE + FLAG_PENALTY);
+
+        client.flag_agent(
+            &agent_addr,
+            &String::from_str(&env, "second flag"),
+            &admin,
+        );
+        let score_after_second = client.get_agent(&agent_addr).unwrap().score;
+        assert_eq!(score_after_second, score_after_first);
+
+        client.flag_agent(
+            &agent_addr,
+            &String::from_str(&env, "third flag"),
+            &admin,
+        );
+        let agent = client.get_agent(&agent_addr).unwrap();
+        assert_eq!(agent.score, score_after_first);
+        assert_eq!(
+            agent.flag_reason,
+            String::from_str(&env, "third flag")
+        );
     }
 
     #[test]
