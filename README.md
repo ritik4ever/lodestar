@@ -28,6 +28,7 @@ Lodestar is currently an early-stage, demo-ready project for the Stellar ecosyst
 - The current deployment targets Stellar testnet and is not yet a mainnet production rollout.
 - The demo experience is useful for validation, but operational hardening, monitoring, and broader real-world testing are still pending.
 - Some UX and onboarding flows are intentionally lightweight and may evolve as contributors shape the roadmap.
+- Agent volume figures (`total_volume_stroops`) and payment outcomes are **provider-attested**: `record_payment` trusts the `amount_stroops` supplied by the calling provider and is not yet bound to a verified on-chain USDC transfer. The design to resolve this is tracked in [ADR-0001](docs/adr/0001-record-payment-onchain-verification.md) (issue [#325](https://github.com/Stellar-Ecosystem/lodestar/issues/325)). Until it is implemented and deployed, treat all volume/reputation numbers on the agents contract as self-reported, not chain-verified.
 
 ### Roadmap
 The short-term direction is to harden the core experience, improve documentation, and expand the set of supported payment and discovery flows. Follow the GitHub milestones for ongoing priorities: https://github.com/Stellar-Ecosystem/lodestar/milestones
