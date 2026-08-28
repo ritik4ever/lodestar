@@ -158,6 +158,17 @@ describe('runTask — happy path', () => {
     expect(result).toEqual({ success: true, priceUsdc: MOCK_SERVICE.price_usdc });
   });
 
+  it('requests page 0 of the global reputation leaderboard (limit=50)', async () => {
+    await runTask('weather', (ep) => ep, true, mockHttpClient);
+
+    const servicesCall = global.fetch.mock.calls.find(([url]) => url.includes('/api/services'));
+    expect(servicesCall).toBeDefined();
+    // #285: the registry returns pages in global reputation order, so page 0 is
+    // the top of the leaderboard — the agent must fetch it explicitly rather
+    // than rely on a per-page local sort.
+    expect(servicesCall[0]).toBe('http://localhost:9999/api/services?category=weather&limit=50');
+  });
+
   it('skips spend check when scoring is disabled', async () => {
     await runTask('weather', (ep) => ep, false, mockHttpClient);
 
