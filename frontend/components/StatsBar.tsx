@@ -43,6 +43,10 @@ export default function StatsBar() {
         value={stats ? String(stats.totalServices) : '—'}
       />
       <Stat
+        label="Active Services"
+        value={stats ? String(stats.activeServices) : '—'}
+      />
+      <Stat
         label="Categories"
         value={stats ? String(stats.categories.length) : '—'}
       />

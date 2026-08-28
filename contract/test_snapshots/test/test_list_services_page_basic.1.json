@@ -47,7 +47,7 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "u64": 3
+                  "u64": 5
                 }
               }
             },
@@ -217,7 +217,7 @@
                         "symbol": "reputation"
                       },
                       "val": {
-                        "i32": 1
+                        "i32": 0
                       }
                     }
                   ]
@@ -351,7 +351,7 @@
                         "symbol": "reputation"
                       },
                       "val": {
-                        "i32": 2
+                        "i32": 0
                       }
                     }
                   ]
@@ -413,7 +413,7 @@
                         "symbol": "category"
                       },
                       "val": {
-                        "string": "storage"
+                        "string": "compute"
                       }
                     },
                     {
@@ -485,7 +485,275 @@
                         "symbol": "reputation"
                       },
                       "val": {
-                        "i32": 1
+                        "i32": 0
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "Service"
+                },
+                {
+                  "u64": 4
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "Service"
+                    },
+                    {
+                      "u64": 4
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "active"
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "category"
+                      },
+                      "val": {
+                        "string": "compute"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "description"
+                      },
+                      "val": {
+                        "string": "Test Description"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "endpoint"
+                      },
+                      "val": {
+                        "string": "https://test.com"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "id"
+                      },
+                      "val": {
+                        "u64": 4
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "name"
+                      },
+                      "val": {
+                        "string": "Test Service"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "pay_to"
+                      },
+                      "val": {
+                        "string": "G_TEST_PAYMENT"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "price_usdc"
+                      },
+                      "val": {
+                        "string": "10"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "provider"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "registered_at"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "reputation"
+                      },
+                      "val": {
+                        "i32": 0
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "Service"
+                },
+                {
+                  "u64": 5
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "Service"
+                    },
+                    {
+                      "u64": 5
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "active"
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "category"
+                      },
+                      "val": {
+                        "string": "compute"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "description"
+                      },
+                      "val": {
+                        "string": "Test Description"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "endpoint"
+                      },
+                      "val": {
+                        "string": "https://test.com"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "id"
+                      },
+                      "val": {
+                        "u64": 5
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "name"
+                      },
+                      "val": {
+                        "string": "Test Service"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "pay_to"
+                      },
+                      "val": {
+                        "string": "G_TEST_PAYMENT"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "price_usdc"
+                      },
+                      "val": {
+                        "string": "10"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "provider"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "registered_at"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "reputation"
+                      },
+                      "val": {
+                        "i32": 0
                       }
                     }
                   ]
@@ -536,6 +804,12 @@
                     },
                     {
                       "u64": 3
+                    },
+                    {
+                      "u64": 4
+                    },
+                    {
+                      "u64": 5
                     }
                   ]
                 }
@@ -588,55 +862,15 @@
                     },
                     {
                       "u64": 2
-                    }
-                  ]
-                }
-              }
-            },
-            "ext": "v0"
-          },
-          4095
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "vec": [
-                {
-                  "symbol": "ServiceIdsByCategory"
-                },
-                {
-                  "string": "storage"
-                }
-              ]
-            },
-            "durability": "persistent"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "vec": [
-                    {
-                      "symbol": "ServiceIdsByCategory"
                     },
                     {
-                      "string": "storage"
-                    }
-                  ]
-                },
-                "durability": "persistent",
-                "val": {
-                  "vec": [
-                    {
                       "u64": 3
+                    },
+                    {
+                      "u64": 4
+                    },
+                    {
+                      "u64": 5
                     }
                   ]
                 }
@@ -685,7 +919,7 @@
                             "symbol": "id"
                           },
                           "val": {
-                            "u64": 2
+                            "u64": 1
                           }
                         },
                         {
@@ -693,7 +927,7 @@
                             "symbol": "reputation"
                           },
                           "val": {
-                            "i32": 2
+                            "i32": 0
                           }
                         }
                       ]
@@ -705,7 +939,7 @@
                             "symbol": "id"
                           },
                           "val": {
-                            "u64": 1
+                            "u64": 2
                           }
                         },
                         {
@@ -713,7 +947,7 @@
                             "symbol": "reputation"
                           },
                           "val": {
-                            "i32": 1
+                            "i32": 0
                           }
                         }
                       ]
@@ -733,7 +967,47 @@
                             "symbol": "reputation"
                           },
                           "val": {
-                            "i32": 1
+                            "i32": 0
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "id"
+                          },
+                          "val": {
+                            "u64": 4
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "reputation"
+                          },
+                          "val": {
+                            "i32": 0
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "id"
+                          },
+                          "val": {
+                            "u64": 5
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "reputation"
+                          },
+                          "val": {
+                            "i32": 0
                           }
                         }
                       ]
@@ -791,7 +1065,7 @@
                             "symbol": "id"
                           },
                           "val": {
-                            "u64": 2
+                            "u64": 1
                           }
                         },
                         {
@@ -799,7 +1073,7 @@
                             "symbol": "reputation"
                           },
                           "val": {
-                            "i32": 2
+                            "i32": 0
                           }
                         }
                       ]
@@ -811,7 +1085,7 @@
                             "symbol": "id"
                           },
                           "val": {
-                            "u64": 1
+                            "u64": 2
                           }
                         },
                         {
@@ -819,57 +1093,11 @@
                             "symbol": "reputation"
                           },
                           "val": {
-                            "i32": 1
+                            "i32": 0
                           }
                         }
                       ]
-                    }
-                  ]
-                }
-              }
-            },
-            "ext": "v0"
-          },
-          4095
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "vec": [
-                {
-                  "symbol": "SortedServiceIdsByCategory"
-                },
-                {
-                  "string": "storage"
-                }
-              ]
-            },
-            "durability": "persistent"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "vec": [
-                    {
-                      "symbol": "SortedServiceIdsByCategory"
                     },
-                    {
-                      "string": "storage"
-                    }
-                  ]
-                },
-                "durability": "persistent",
-                "val": {
-                  "vec": [
                     {
                       "map": [
                         {
@@ -885,7 +1113,47 @@
                             "symbol": "reputation"
                           },
                           "val": {
-                            "i32": 1
+                            "i32": 0
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "id"
+                          },
+                          "val": {
+                            "u64": 4
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "reputation"
+                          },
+                          "val": {
+                            "i32": 0
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "map": [
+                        {
+                          "key": {
+                            "symbol": "id"
+                          },
+                          "val": {
+                            "u64": 5
+                          }
+                        },
+                        {
+                          "key": {
+                            "symbol": "reputation"
+                          },
+                          "val": {
+                            "i32": 0
                           }
                         }
                       ]

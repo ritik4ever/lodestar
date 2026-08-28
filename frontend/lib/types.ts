@@ -22,6 +22,9 @@ export interface ApiResponse<T> {
 
 export interface StatsResponse {
   totalServices: number;
+  // Currently-active services (exact on-chain count from
+  // get_active_service_count) — the bound clients use for pagination.
+  activeServices: number;
   categories: Category[];
   latestService: ServiceEntry | null;
 }

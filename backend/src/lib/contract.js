@@ -433,6 +433,19 @@ export async function getServiceCount() {
   }
 }
 
+export async function getActiveServiceCount() {
+  try {
+    const contract = getContract();
+    const op = contract.call('get_active_service_count');
+    const retval = await simulateRead(op);
+    if (!retval) return 0;
+    return Number(scValToNative(retval));
+  } catch (err) {
+    logger.error({ err }, 'getActiveServiceCount failed');
+    return 0;
+  }
+}
+
 export const contractHelpers = {
   activeServiceExists: async function (provider, endpoint, fetchServices = listServices) {
     let offset = 0;

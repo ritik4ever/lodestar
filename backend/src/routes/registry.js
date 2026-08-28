@@ -4,6 +4,7 @@ import {
   listServicesByProvider,
   getService,
   getServiceCount,
+  getActiveServiceCount,
   deactivateServiceOnChain,
   updateReputation,
   isAllowedReputationAgent,
@@ -46,19 +47,6 @@ function normalizePriceUsdc(value) {
   }
 
   return normalized;
-}
-
-/**
- * Annotate a service entry with a ttl_warning flag.
- * Returns true when the estimated remaining TTL falls below
- * SERVICE_TTL_WARNING_LEDGERS. Omits the field when currentLedger
- * is unavailable so callers treat absence as "no warning data".
- */
-function annotateTtlWarning(service, currentLedger) {
-  if (currentLedger == null) return service;
-  const expiry = service.registered_at + SERVICE_MAX_TTL;
-  const warnOnset = expiry - SERVICE_TTL_WARNING_LEDGERS;
-  return { ...service, ttl_warning: currentLedger >= warnOnset };
 }
 
 function parsePositiveSafeInteger(value) {
@@ -280,8 +268,16 @@ router.get("/services/:id/history", async (req, res) => {
 
 router.get("/stats", async (req, res) => {
   try {
-    const totalServices = await getServiceCount();
-    const totalPages = Math.ceil(totalServices / PAGE_SIZE);
+    const [totalServices, activeServices] = await Promise.all([
+      getServiceCount(),
+      getActiveServiceCount(),
+    ]);
+
+    // Walk exactly ceil(active / PAGE_SIZE) pages: the on-chain active count is
+    // the precise pagination bound (get_service_count counts deactivated
+    // services too, which would make the walk overshoot with empty trailing
+    // pages).
+    const totalPages = Math.ceil(activeServices / PAGE_SIZE);
     let allServices = [];
     for (let i = 0; i < totalPages; i++) {
       const page = await listServices({ offset: i * PAGE_SIZE, limit: PAGE_SIZE });
@@ -295,7 +291,7 @@ router.get("/stats", async (req, res) => {
       null,
     );
 
-    res.json({ totalServices, categories, latestService });
+    res.json({ totalServices, activeServices, categories, latestService });
   } catch (err) {
     logger.error({ err }, "GET /api/stats failed");
     res.status(500).json({ error: "Failed to fetch stats", code: "FETCH_ERROR" });

@@ -30,10 +30,44 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Maximum page size the registry contract honours (list_services clamps
+// limit to 1..=50).
+const SERVICES_PAGE_LIMIT = 50;
+
 export async function fetchServices(category?: Category): Promise<ServiceEntry[]> {
-  const query = category ? `?category=${category}` : '';
-  const data = await apiFetch<ServicesResponse>(`/api/services${query}`);
-  return data.services;
+  // list_services is globally reputation-ordered and paginated, but a single
+  // call returns only one page (backend default 20) — page 0 alone would
+  // silently truncate the registry and make client-side pagination wrong.
+  // Walk every page instead. For the unfiltered view the exact on-chain active
+  // count (get_active_service_count, exposed via /api/stats) bounds the walk
+  // so we stop exactly at the last active service instead of guessing.
+  let bound: number | undefined;
+  if (!category) {
+    try {
+      bound = (await fetchStats()).activeServices;
+    } catch {
+      // Stats are best-effort; fall back to walking until a short page.
+    }
+  }
+
+  const services: ServiceEntry[] = [];
+  let offset = 0;
+  while (true) {
+    const params = [
+      `offset=${offset}`,
+      `limit=${SERVICES_PAGE_LIMIT}`,
+      category ? `category=${category}` : '',
+    ].filter(Boolean).join('&');
+    const page = (await apiFetch<ServicesResponse>(`/api/services?${params}`)).services;
+    services.push(...page);
+    offset += page.length;
+    // A short page means the registry is exhausted; the bound (when known)
+    // lets us stop without a trailing empty request.
+    if (page.length < SERVICES_PAGE_LIMIT || (bound !== undefined && services.length >= bound)) {
+      break;
+    }
+  }
+  return services;
 }
 
 export async function fetchStats(): Promise<StatsResponse> {

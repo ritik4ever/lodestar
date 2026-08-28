@@ -11,9 +11,10 @@ jest.mock('@/lib/contract', () => ({
 const mockFetchStats = fetchStats as jest.Mock;
 const REFRESH_INTERVAL_MS = 30_000;
 
-function makeStats(totalServices: number): StatsResponse {
+function makeStats(totalServices: number, activeServices = totalServices): StatsResponse {
   return {
     totalServices,
+    activeServices,
     categories: ['search', 'weather'],
     latestService: null,
   };
@@ -31,17 +32,20 @@ describe('StatsBar auto-refresh', () => {
   });
 
   it('fetches stats on mount and renders the totals', async () => {
-    mockFetchStats.mockResolvedValue(makeStats(3));
+    mockFetchStats.mockResolvedValue(makeStats(3, 1));
     render(<StatsBar />);
 
     expect(mockFetchStats).toHaveBeenCalledTimes(1);
     expect(await screen.findByText('3')).toBeInTheDocument();
+    // The exact active count is rendered as its own stat (1, distinct from the
+    // categories count of 2).
+    expect(await screen.findByText('1')).toBeInTheDocument();
   });
 
   it('re-fetches on the 30s interval and updates the displayed totals', async () => {
     mockFetchStats
-      .mockResolvedValueOnce(makeStats(3))
-      .mockResolvedValueOnce(makeStats(7));
+      .mockResolvedValueOnce(makeStats(3, 1))
+      .mockResolvedValueOnce(makeStats(7, 5));
     render(<StatsBar />);
 
     expect(await screen.findByText('3')).toBeInTheDocument();
@@ -51,6 +55,7 @@ describe('StatsBar auto-refresh', () => {
     });
 
     expect(await screen.findByText('7')).toBeInTheDocument();
+    expect(await screen.findByText('5')).toBeInTheDocument();
     expect(mockFetchStats).toHaveBeenCalledTimes(2);
   });
 
@@ -70,7 +75,7 @@ describe('StatsBar auto-refresh', () => {
   });
 
   it('stops refreshing after unmount', async () => {
-    mockFetchStats.mockResolvedValue(makeStats(3));
+    mockFetchStats.mockResolvedValue(makeStats(3, 1));
     const { unmount } = render(<StatsBar />);
 
     expect(await screen.findByText('3')).toBeInTheDocument();

@@ -6,6 +6,7 @@ const mockListServices = vi.fn();
 const mockListServicesByProvider = vi.fn();
 const mockGetService = vi.fn();
 const mockGetServiceCount = vi.fn();
+const mockGetActiveServiceCount = vi.fn();
 const mockDeactivateServiceOnChain = vi.fn();
 const mockGetReputationHistory = vi.fn();
 const mockUpdateReputation = vi.fn();
@@ -24,6 +25,7 @@ vi.mock('../lib/contract.js', () => ({
   listServicesByProvider: (...args) => mockListServicesByProvider(...args),
   getService: (...args) => mockGetService(...args),
   getServiceCount: (...args) => mockGetServiceCount(...args),
+  getActiveServiceCount: (...args) => mockGetActiveServiceCount(...args),
   deactivateServiceOnChain: (...args) => mockDeactivateServiceOnChain(...args),
   updateReputation: (...args) => mockUpdateReputation(...args),
   isAllowedReputationAgent: (...args) => mockIsAllowedReputationAgent(...args),
@@ -231,6 +233,70 @@ describe('GET /api/services', () => {
     expect(res.body.services).toHaveLength(2);
     expect(res.body.services.map((s) => s.id)).toEqual([1, 2]);
     expect(res.body.count).toBe(2);
+  });
+});
+
+describe('GET /api/stats', () => {
+  beforeEach(() => {
+    mockGetServiceCount.mockReset();
+    mockGetActiveServiceCount.mockReset();
+    mockListServices.mockReset();
+  });
+
+  it('reports total and active service counts, categories, and latest service', async () => {
+    mockGetServiceCount.mockResolvedValueOnce(7);
+    mockGetActiveServiceCount.mockResolvedValueOnce(5);
+    mockListServices.mockResolvedValueOnce([
+      makeService({ id: 1, category: 'weather', registered_at: 1000 }),
+      makeService({ id: 2, category: 'search', registered_at: 900 }),
+      makeService({ id: 3, category: 'weather', registered_at: 1100 }),
+    ]);
+
+    const res = await request(app).get('/api/stats');
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalServices).toBe(7);
+    expect(res.body.activeServices).toBe(5);
+    expect(res.body.categories).toEqual(expect.arrayContaining(['weather', 'search']));
+    expect(res.body.latestService.id).toBe(3);
+  });
+
+  it('walks exactly ceil(activeServices / PAGE_SIZE) pages, not the all-time count', async () => {
+    // 40 all-time registrations, 25 still active (15 deactivated). The walk
+    // must be bounded by the ACTIVE count (2 pages), not the all-time count
+    // (which would walk 2 extra empty pages).
+    mockGetServiceCount.mockResolvedValueOnce(40);
+    mockGetActiveServiceCount.mockResolvedValueOnce(25);
+    mockListServices.mockResolvedValueOnce([]);
+
+    await request(app).get('/api/stats');
+
+    expect(mockListServices).toHaveBeenCalledTimes(2);
+    expect(mockListServices).toHaveBeenNthCalledWith(1, { offset: 0, limit: 20 });
+    expect(mockListServices).toHaveBeenNthCalledWith(2, { offset: 20, limit: 20 });
+  });
+
+  it('handles an empty active registry without walking any pages', async () => {
+    mockGetServiceCount.mockResolvedValueOnce(3);
+    mockGetActiveServiceCount.mockResolvedValueOnce(0);
+
+    const res = await request(app).get('/api/stats');
+
+    expect(res.status).toBe(200);
+    expect(res.body.activeServices).toBe(0);
+    expect(res.body.categories).toEqual([]);
+    expect(res.body.latestService).toBeNull();
+    expect(mockListServices).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when the active count read fails', async () => {
+    mockGetServiceCount.mockResolvedValueOnce(3);
+    mockGetActiveServiceCount.mockRejectedValueOnce(new Error('chain down'));
+
+    const res = await request(app).get('/api/stats');
+
+    expect(res.status).toBe(500);
+    expect(res.body.code).toBe('FETCH_ERROR');
   });
 });
 
