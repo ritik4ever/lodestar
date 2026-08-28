@@ -223,7 +223,7 @@ Every agent is anonymous. Services cannot distinguish a reliable agent from a br
 ### The Solution
 
 - Agents register on-chain and start with score **100**
-- Every successful x402 payment increases score by **+10**
+- Every successful x402 payment increases score by **+10** (reduced to **+2** below the policy's `min_score_to_earn` — see [Score Recovery](#score-recovery))
 - Every failed payment decreases score by **−25**
 - Services can set minimum score requirements
 - Spending policies are enforced at contract level — cannot be bypassed
