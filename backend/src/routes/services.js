@@ -7,6 +7,85 @@ import logger from '../lib/logger.js';
 import { recordPaymentOnChain, getAgent } from '../lib/contract.js';
 import { usdcToStroops } from '../lib/stroops.js';
 import { isValidStellarAddress } from '../middleware/addressValidator.js';
+import {
+  isCircuitClosed,
+  recordSuccess,
+  recordFailure,
+  getCircuitBreakerState,
+} from '../lib/facilitatorCircuitBreaker.js';
+
+/**
+ * Creates a timeout promise that rejects after the specified duration.
+ * @param {number} ms - Timeout in milliseconds
+ * @param {string} message - Error message for timeout
+ * @returns {Promise<never>} Promise that rejects after timeout
+ */
+function timeoutPromise(ms, message = 'Request timeout') {
+  return new Promise((_, reject) => {
+    setTimeout(() => {
+      const error = new Error(`${message} after ${ms}ms`);
+      error.code = 'ETIMEDOUT';
+      reject(error);
+    }, ms);
+  });
+}
+
+/**
+ * Wraps the payment middleware to add circuit breaker protection.
+ * Intercepts errors from the facilitator calls and tracks them for circuit breaker state.
+ */
+function createCircuitBreakerMiddleware(paymentMiddleware) {
+  return async (req, res, next) => {
+    // Check if circuit is open
+    if (!isCircuitClosed()) {
+      const state = getCircuitBreakerState();
+      logger.warn(
+        { state: state.state, consecutiveFailures: state.consecutiveFailures, threshold: state.threshold },
+        'Circuit breaker is OPEN - rejecting payment request with 503',
+      );
+      return res.status(503).json({
+        error: 'Payment service temporarily unavailable',
+        code: 'FACILITATOR_UNAVAILABLE',
+        retryAfter: Math.ceil((state.timeUntilRetry || 30000) / 1000),
+      });
+    }
+
+    // Track timing for facilitator latency
+    const startTime = Date.now();
+
+    // Override res.json to intercept successful responses
+    const originalJson = res.json.bind(res);
+    res.json = (body) => {
+      const latencyMs = Date.now() - startTime;
+      recordSuccess(latencyMs);
+      res.json = originalJson;
+      return originalJson(body);
+    };
+
+    try {
+      // Call the payment middleware
+      await new Promise((resolve, reject) => {
+        paymentMiddleware(req, res, (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      // If we get here, the middleware passed without calling res.json (e.g., no payment required)
+      // This means we should not record success as there was no facilitator call
+      res.json = originalJson;
+      next();
+    } catch (err) {
+      const latencyMs = Date.now() - startTime;
+      recordFailure(err, latencyMs);
+      res.json = originalJson;
+      next(err);
+    }
+  };
+}
 
 const router = Router();
 
@@ -65,7 +144,10 @@ import {
   parseActivityPagination,
 } from '../lib/activityFeed.js';
 
-const facilitator = new HTTPFacilitatorClient({ url: config.x402.facilitatorUrl });
+const facilitator = new HTTPFacilitatorClient({
+  url: config.x402.facilitatorUrl,
+  timeout: config.x402.facilitatorTimeoutMs,
+});
 const stellarScheme = new ExactStellarScheme();
 
 const paymentConfig = {
@@ -89,11 +171,16 @@ const paymentConfig = {
   },
 };
 
-router.use(
-  paymentMiddlewareFromConfig(paymentConfig, facilitator, [
-    { network: 'stellar:testnet', server: stellarScheme },
-  ])
-);
+// Create the raw payment middleware from x402
+const rawPaymentMiddleware = paymentMiddlewareFromConfig(paymentConfig, facilitator, [
+  { network: 'stellar:testnet', server: stellarScheme },
+]);
+
+// Wrap with circuit breaker protection
+const circuitBreakerMiddleware = createCircuitBreakerMiddleware(rawPaymentMiddleware);
+
+// Apply the circuit-breaker-wrapped payment middleware to all routes in this router
+router.use(circuitBreakerMiddleware);
 
 router.get('/weather', async (req, res) => {
   try {

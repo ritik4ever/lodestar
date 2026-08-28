@@ -5,6 +5,10 @@ import request from 'supertest';
 const mockRecordPaymentOnChain = vi.fn();
 const mockGetAgent = vi.fn();
 const mockRecordActivity = vi.fn();
+const mockIsCircuitClosed = vi.fn();
+const mockRecordSuccess = vi.fn();
+const mockRecordFailure = vi.fn();
+const mockGetCircuitBreakerState = vi.fn();
 
 vi.mock('../lib/contract.js', () => ({
   recordPaymentOnChain: (...args) => mockRecordPaymentOnChain(...args),
@@ -24,11 +28,19 @@ vi.mock('../lib/logger.js', () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('../lib/facilitatorCircuitBreaker.js', () => ({
+  isCircuitClosed: (...args) => mockIsCircuitClosed(...args),
+  recordSuccess: (...args) => mockRecordSuccess(...args),
+  recordFailure: (...args) => mockRecordFailure(...args),
+  getCircuitBreakerState: (...args) => mockGetCircuitBreakerState(...args),
+  __resetCircuitBreaker: vi.fn(),
+}));
+
 vi.mock('../config.js', () => ({
   default: {
     contract: { agentsId: 'mock-agents-contract' },
     server: { address: 'mock_address', secret: 'mock_secret' },
-    x402: { facilitatorUrl: 'https://mock', weatherPrice: '0.001', searchPrice: '0.001', payTo: 'G_MOCK_PAYMENT' },
+    x402: { facilitatorUrl: 'https://mock', facilitatorTimeoutMs: 10000, weatherPrice: '0.001', searchPrice: '0.001', payTo: 'G_MOCK_PAYMENT' },
     braveApiKey: 'mock_key',
     corsOrigin: ['http://localhost:3000'],
     nodeEnv: 'test',
@@ -67,6 +79,18 @@ beforeAll(async () => {
   const router = (await import('./services.js')).default;
   const loggerModule = await import('../lib/logger.js');
   mockLogger = loggerModule.default;
+  
+  // Default circuit breaker mock: circuit is closed (allowing requests)
+  mockIsCircuitClosed.mockReturnValue(true);
+  mockGetCircuitBreakerState.mockReturnValue({
+    state: 'closed',
+    consecutiveFailures: 0,
+    threshold: 5,
+    totalCalls: 0,
+    successfulCalls: 0,
+    failedCalls: 0,
+  });
+  
   app = express();
   app.use(express.json());
   app.use('/demo', router);
@@ -74,6 +98,16 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Reset default circuit breaker behavior for each test
+  mockIsCircuitClosed.mockReturnValue(true);
+  mockGetCircuitBreakerState.mockReturnValue({
+    state: 'closed',
+    consecutiveFailures: 0,
+    threshold: 5,
+    totalCalls: 0,
+    successfulCalls: 0,
+    failedCalls: 0,
+  });
 });
 
 describe('GET /demo/weather coordinate validation', () => {
@@ -287,5 +321,72 @@ describe('payment header validation — search', () => {
       expect.objectContaining({ agentAddress: VALID_STELLAR_ADDRESS, txHash: 'searchtx99' }),
       expect.stringContaining('search payment credited to registered agent')
     );
+  });
+});
+
+describe('circuit breaker integration', () => {
+  it('returns 503 FACILITATOR_UNAVAILABLE when circuit is open (weather)', async () => {
+    // Simulate circuit being open
+    mockIsCircuitClosed.mockReturnValue(false);
+    mockGetCircuitBreakerState.mockReturnValue({
+      state: 'open',
+      consecutiveFailures: 5,
+      threshold: 5,
+      totalCalls: 10,
+      successfulCalls: 5,
+      failedCalls: 5,
+      timeUntilRetry: 25000,
+    });
+
+    const res = await request(app)
+      .get('/demo/weather?lat=0&lon=0')
+      .set('x-payment-address', VALID_STELLAR_ADDRESS);
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('FACILITATOR_UNAVAILABLE');
+    expect(res.body.retryAfter).toBe(25); // ~25 seconds
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'open' }),
+      expect.stringContaining('Circuit breaker is OPEN'),
+    );
+  });
+
+  it('returns 503 FACILITATOR_UNAVAILABLE when circuit is open (search)', async () => {
+    mockIsCircuitClosed.mockReturnValue(false);
+    mockGetCircuitBreakerState.mockReturnValue({
+      state: 'open',
+      consecutiveFailures: 5,
+      threshold: 5,
+      timeUntilRetry: 15000,
+    });
+
+    const res = await request(app)
+      .get('/demo/search?q=test')
+      .set('x-payment-address', VALID_STELLAR_ADDRESS);
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('FACILITATOR_UNAVAILABLE');
+  });
+
+  it('allows request through when circuit is closed', async () => {
+    global.fetch = mockWeatherFetch();
+    mockIsCircuitClosed.mockReturnValue(true);
+
+    const res = await request(app)
+      .get('/demo/weather?lat=0&lon=0');
+
+    expect(res.status).toBe(200);
+    // Should not hit the circuit breaker error path
+    expect(mockGetCircuitBreakerState).not.toHaveBeenCalledWith(expect.objectContaining({ state: 'open' }));
+  });
+
+  it('checks circuit breaker state before processing request', async () => {
+    global.fetch = mockWeatherFetch();
+    mockIsCircuitClosed.mockReturnValue(true);
+
+    await request(app).get('/demo/weather?lat=0&lon=0');
+
+    // Circuit breaker should have been checked
+    expect(mockIsCircuitClosed).toHaveBeenCalled();
   });
 });

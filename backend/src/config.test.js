@@ -28,6 +28,7 @@ async function loadConfig(overrides = {}) {
     'DEMO_RUN_POLL_MAX_WAIT_MS',
     'DEMO_RUN_POLL_INITIAL_DELAY_MS',
     'DEMO_RUN_POLL_MAX_DELAY_MS',
+    'FACILITATOR_TIMEOUT_MS',
   ]) {
     if (!(key in overrides)) delete process.env[key];
   }
@@ -143,6 +144,7 @@ describe('config x402.payTo PAYMENT_ADDRESS validation', () => {
       'DEMO_RUN_POLL_MAX_WAIT_MS',
       'DEMO_RUN_POLL_INITIAL_DELAY_MS',
       'DEMO_RUN_POLL_MAX_DELAY_MS',
+      'FACILITATOR_TIMEOUT_MS',
     ]) {
       delete process.env[key];
     }
@@ -165,6 +167,49 @@ describe('config x402.payTo PAYMENT_ADDRESS validation', () => {
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
+  });
+});
+
+describe('config FACILITATOR_TIMEOUT_MS env validation', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it('uses safe default of 10000ms when FACILITATOR_TIMEOUT_MS is unset', async () => {
+    const config = await loadConfig();
+    expect(config.x402.facilitatorTimeoutMs).toBe(10_000);
+  });
+
+  it('honors a valid positive-integer override', async () => {
+    const config = await loadConfig({ FACILITATOR_TIMEOUT_MS: '5000' });
+    expect(config.x402.facilitatorTimeoutMs).toBe(5000);
+  });
+
+  it('falls back and warns on non-numeric values', async () => {
+    const config = await loadConfig({ FACILITATOR_TIMEOUT_MS: 'abc' });
+    expect(config.x402.facilitatorTimeoutMs).toBe(10_000);
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  it('falls back on zero or negative values', async () => {
+    const config = await loadConfig({ FACILITATOR_TIMEOUT_MS: '0' });
+    expect(config.x402.facilitatorTimeoutMs).toBe(10_000);
+    expect(console.warn).toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    const config2 = await loadConfig({ FACILITATOR_TIMEOUT_MS: '-100' });
+    expect(config2.x402.facilitatorTimeoutMs).toBe(10_000);
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  it('accepts large timeout values', async () => {
+    const config = await loadConfig({ FACILITATOR_TIMEOUT_MS: '60000' });
+    expect(config.x402.facilitatorTimeoutMs).toBe(60_000);
   });
 });
 
