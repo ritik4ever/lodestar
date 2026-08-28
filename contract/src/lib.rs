@@ -14,6 +14,23 @@ const VOTE_COOLDOWN_LEDGERS: u64 = 720;
 const MAX_REPUTATION: i32 = 10_000;
 const MIN_REPUTATION: i32 = -10_000;
 
+// Canonical category list. Keep in sync with `frontend/lib/categoryMeta.tsx`.
+// Existing mixed-case entries are not migrated automatically; providers should
+// re-register under a canonical category returned by `list_categories()`.
+const VALID_CATEGORIES: &[&str] = &["weather", "finance", "health", "education"];
+
+// Returns the canonical lower-case form for a user-supplied category string,
+// or `None` if it is not one of the known categories.
+fn canonicalize_category(env: &Env, category: &String) -> Option<String> {
+    let trimmed = category.as_str().trim();
+    for &cat in VALID_CATEGORIES {
+        if trimmed.eq_ignore_ascii_case(cat) {
+            return Some(String::from_str(env, cat));
+        }
+    }
+    None
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct ServiceEntry {
@@ -132,7 +149,9 @@ impl LodestarRegistry {
 
         let new_id = counter + 1;
 
-        let cat = category.clone();
+        let canonical_category =
+            canonicalize_category(&env, &category).expect("invalid category");
+        let cat = canonical_category.clone();
 
         let entry = ServiceEntry {
             id: new_id,
@@ -141,7 +160,7 @@ impl LodestarRegistry {
             endpoint,
             price_usdc,
             pay_to,
-            category,
+            category: canonical_category,
             provider,
             reputation: 0,
             active: true,
@@ -205,6 +224,7 @@ impl LodestarRegistry {
         let limit = limit.min(50u32).max(1u32);
         let start: u32 = offset;
 
+        let category = category.map(|c| canonicalize_category(&env, &c).expect("invalid category"));
         let ids: Vec<u64> = if let Some(ref cat) = category {
             env.storage()
                 .persistent()
@@ -252,6 +272,15 @@ impl LodestarRegistry {
         }
 
         services
+    }
+
+    /// Return the list of valid category strings.
+    pub fn list_categories(env: Env) -> Vec<String> {
+        let mut categories: Vec<String> = vec![&env];
+        for &cat in VALID_CATEGORIES {
+            categories.push_back(String::from_str(&env, cat));
+        }
+        categories
     }
 
     /// Cast a reputation vote on a service.
