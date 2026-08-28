@@ -5,15 +5,17 @@ edition = "2021"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { version = "22.0.0", features = ["alloc"] }
+lodestar-types = { path = "../lodestar-types" }
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils", "alloc"] }
+lodestar-registry = { path = ".." }
 
-[profile.release]
+profile.release]
 opt-level = "z"
 overflow-checks = true
 debug = 0
