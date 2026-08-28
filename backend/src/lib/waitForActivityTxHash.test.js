@@ -97,6 +97,56 @@ describe('waitForActivityTxHash', () => {
     expect(delays.length).toBeGreaterThan(0);
   });
 
+  it('rejects with an AbortError and never polls when the signal is already aborted', async () => {
+    const { sleep, delays } = makeSleepRecorder();
+    const getFeed = vi.fn(() => [{ txHash: 'abc123' }]);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      waitForActivityTxHash(
+        getFeed,
+        0,
+        { ...defaultOptions, signal: controller.signal },
+        undefined,
+        sleep,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    // Aborted before the initial feed read → no feed poll, no sleeping.
+    expect(getFeed).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+    expect(delays).toEqual([]);
+  });
+
+  it('aborts mid-poll and stops early instead of sleeping to the full budget', async () => {
+    const controller = new AbortController();
+    const delays = [];
+    // Abort after the first sleep so the loop cannot exhaust maxWaitMs.
+    const sleep = vi.fn(async (ms) => {
+      delays.push(ms);
+      controller.abort();
+    });
+    // Feed never contains a txHash, so absent an abort the loop would keep
+    // polling until maxWaitMs is reached.
+    const getFeed = vi.fn(() => [{ txHash: '' }]);
+
+    await expect(
+      waitForActivityTxHash(
+        getFeed,
+        0,
+        { maxWaitMs: 8000, initialDelayMs: 250, maxDelayMs: 2000, signal: controller.signal },
+        undefined,
+        sleep,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    // Only one sleep happened before the abort was observed — nowhere near the
+    // full 8000ms budget of exponential backoff.
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(delays).toEqual([250]);
+  });
+
   it('ignores unrelated new entries when a matcher is provided', async () => {
     const { sleep, delays } = makeSleepRecorder();
     const myId = 'request-a';
