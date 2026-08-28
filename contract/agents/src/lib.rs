@@ -529,6 +529,8 @@ impl LodestarAgents {
 
     // List a single page of agents in registration order (avoids O(n) reads for large sets)
     pub fn list_agents_page(env: Env, page: u32, page_size: u32) -> Vec<AgentEntry> {
+        let page_size = page_size.min(20u32).max(1u32);
+
         let ids_key = DataKey::AgentIds;
         let ids: Vec<Address> = env
             .storage()
@@ -542,7 +544,7 @@ impl LodestarAgents {
         if start >= total {
             return result;
         }
-        let end = (start + page_size as usize).min(total);
+        let end = start.saturating_add(page_size as usize).min(total);
         for i in start..end {
             let addr = ids.get(i as u32).unwrap();
             if let Some(agent) = env
@@ -1294,5 +1296,93 @@ mod test {
         
         // Should allow full amount again after reset
         assert!(client.check_spending_allowed(&agent_addr, &1000));
+    }
+
+    #[test]
+    fn test_list_agents_page_full_coverage() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+
+        let mut addrs: Vec<Address> = vec![&env];
+        for _ in 0..7 {
+            let addr = Address::generate(&env);
+            setup_agent(&env, &contract_id, &addr, &owner);
+            addrs.push_back(addr);
+        }
+
+        // Page 0 with page_size=3
+        let page0 = client.list_agents_page(&0, &3);
+        assert_eq!(page0.len(), 3);
+        assert_eq!(page0.get(0).unwrap().address, addrs.get(0).unwrap());
+        assert_eq!(page0.get(1).unwrap().address, addrs.get(1).unwrap());
+        assert_eq!(page0.get(2).unwrap().address, addrs.get(2).unwrap());
+
+        // Page 1 with page_size=3
+        let page1 = client.list_agents_page(&1, &3);
+        assert_eq!(page1.len(), 3);
+        assert_eq!(page1.get(0).unwrap().address, addrs.get(3).unwrap());
+        assert_eq!(page1.get(1).unwrap().address, addrs.get(4).unwrap());
+        assert_eq!(page1.get(2).unwrap().address, addrs.get(5).unwrap());
+
+        // Page 2 with page_size=3
+        let page2 = client.list_agents_page(&2, &3);
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2.get(0).unwrap().address, addrs.get(6).unwrap());
+
+        // Page 3 with page_size=3 (empty / past end)
+        let page3 = client.list_agents_page(&3, &3);
+        assert_eq!(page3.len(), 0);
+    }
+
+    #[test]
+    fn test_list_agents_page_parameter_bounds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+
+        for _ in 0..5 {
+            let addr = Address::generate(&env);
+            setup_agent(&env, &contract_id, &addr, &owner);
+        }
+
+        // Test page_size clamping: 25 should clamp to 20 (returns all 5 available)
+        let result_max = client.list_agents_page(&0, &25);
+        assert_eq!(result_max.len(), 5);
+
+        // Test page_size clamping: 0 should clamp to 1 (returns 1)
+        let result_min = client.list_agents_page(&0, &0);
+        assert_eq!(result_min.len(), 1);
+    }
+
+    #[test]
+    fn test_list_agents_page_empty_registry() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let page0 = client.list_agents_page(&0, &10);
+        assert_eq!(page0.len(), 0);
+    }
+
+    #[test]
+    fn test_list_agents_page_saturating_arithmetic() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+
+        let addr = Address::generate(&env);
+        setup_agent(&env, &contract_id, &addr, &owner);
+
+        // Extremely large page number should not overflow or panic
+        let result = client.list_agents_page(&u32::MAX, &u32::MAX);
+        assert_eq!(result.len(), 0);
     }
 }
