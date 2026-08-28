@@ -473,6 +473,56 @@ impl LodestarAgents {
             .extend_ttl(&key, MAX_TTL, MAX_TTL);
     }
 
+    // Reactivate agent (owner only)
+    pub fn reactivate_agent(env: Env, agent_address: Address, caller: Address) {
+        caller.require_auth();
+
+        let key = DataKey::Agent(agent_address);
+        let mut agent: AgentEntry = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .expect("agent not found");
+
+        if agent.owner != caller {
+            panic!("unauthorized");
+        }
+
+        agent.active = true;
+        env.storage().persistent().set(&key, &agent);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MAX_TTL, MAX_TTL);
+    }
+
+    // Admin reactivate agent (can reactivate any agent regardless of ownership)
+    pub fn admin_reactivate_agent(env: Env, agent_address: Address, caller: Address) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("admin not set — call initialize() first");
+
+        if caller != admin {
+            panic!("unauthorized");
+        }
+
+        let key = DataKey::Agent(agent_address);
+        let mut agent: AgentEntry = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .expect("agent not found");
+
+        agent.active = true;
+        env.storage().persistent().set(&key, &agent);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MAX_TTL, MAX_TTL);
+    }
+
     // Get the current admin address
     pub fn get_admin(env: Env) -> Address {
         env.storage()
