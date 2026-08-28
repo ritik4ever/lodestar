@@ -9,7 +9,7 @@ import {
 
 describe('registry contract error mapping', () => {
   it('documents every registry contract error code', () => {
-    expect(Object.keys(REGISTRY_ERROR_CODES).map(Number)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(Object.keys(REGISTRY_ERROR_CODES).map(Number)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 
   it('maps numeric registry codes to API ContractError objects', () => {

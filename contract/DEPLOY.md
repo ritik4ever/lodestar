@@ -159,6 +159,8 @@ failures. These discriminants are stable API surface and must not be reordered:
 | 7 | `ReputationVoteCooldown` | `REPUTATION_VOTE_COOLDOWN` | The same agent voted on the same service too recently. |
 | 8 | `ProviderMismatch` | `PROVIDER_MISMATCH` | A non-provider attempted to deactivate the service. |
 | 9 | `CategoryIndexNotFound` | `CATEGORY_INDEX_NOT_FOUND` | Registry storage is missing the service category index. |
+| 10 | `InvalidEndpoint` | `INVALID_ENDPOINT` | Service endpoint is longer than 256 characters. |
+| 11 | `InvalidCategory` | `INVALID_CATEGORY` | Service category is outside the 1-32 character range. |
 
 ## 10. (Optional) Set demo agent secrets
 
@@ -190,6 +192,21 @@ cd backend && npm run seed-agents
 ```
 
 This registers three demo agents (NewAgent ~110, EstablishedAgent ~600, TrustedAgent ~1000) and builds their payment histories on-chain.
+
+## Registration Field Limits
+
+The `register_service` function enforces the following field limits on-chain:
+
+| Field | Min | Max | Notes |
+|-------|-----|-----|-------|
+| `name` | 3 | 64 | |
+| `description` | 10 | 256 | |
+| `endpoint` | — | 256 | |
+| `category` | 1 | 32 | |
+
+Submissions outside these limits are rejected with typed `RegistryError` values.
+The same limits are enforced client-side in the RegisterForm and server-side
+by the `POST /api/registry/prepare-register` route.
 
 ## Network Details
 

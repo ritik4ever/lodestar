@@ -10,6 +10,8 @@ export const REGISTRY_ERROR_CODES = Object.freeze({
   7: { code: 'REPUTATION_VOTE_COOLDOWN', message: 'This agent has voted on this service too recently' },
   8: { code: 'PROVIDER_MISMATCH', message: 'Only the provider that registered this service can deactivate it' },
   9: { code: 'CATEGORY_INDEX_NOT_FOUND', message: 'Category index not found' },
+  10: { code: 'INVALID_ENDPOINT', message: 'Service endpoint must be at most 256 characters' },
+  11: { code: 'INVALID_CATEGORY', message: 'Service category must be 1-32 characters' },
 });
 
 const REGISTRY_ERROR_PATTERNS = [
