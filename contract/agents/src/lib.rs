@@ -98,6 +98,21 @@ pub struct LodestarAgents;
 
 // ── Private helpers ────────────────────────────────────────────────────────────
 impl LodestarAgents {
+    /// Require that `caller` is the current admin.
+    fn require_admin(env: &Env, caller: &Address) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("admin not set — call initialize() first");
+
+        if caller != admin {
+            panic!("unauthorized");
+        }
+    }
+
     /// Get the current daily spent amount and reset it if a new day has started.
     /// Returns (daily_spent_stroops, last_reset_ledger) for the current day.
     fn get_daily_spend_with_reset(
@@ -394,17 +409,7 @@ impl LodestarAgents {
 
     // Flag an agent (admin-only)
     pub fn flag_agent(env: Env, agent_address: Address, reason: String, caller: Address) {
-        caller.require_auth();
-
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("admin not set — call initialize() first");
-
-        if caller != admin {
-            panic!("unauthorized");
-        }
+        Self::require_admin(&env, &caller);
 
         let key = DataKey::Agent(agent_address);
         let mut agent: AgentEntry = env
@@ -447,17 +452,7 @@ impl LodestarAgents {
 
     // Admin deactivate agent (can deactivate any agent regardless of ownership)
     pub fn admin_deactivate_agent(env: Env, agent_address: Address, caller: Address) {
-        caller.require_auth();
-
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("admin not set — call initialize() first");
-
-        if caller != admin {
-            panic!("unauthorized");
-        }
+        Self::require_admin(&env, &caller);
 
         let key = DataKey::Agent(agent_address);
         let mut agent: AgentEntry = env
