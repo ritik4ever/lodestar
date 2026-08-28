@@ -50,7 +50,7 @@ let agentsCache = null;
 let agentsCacheTime = 0;
 const AGENTS_CACHE_TTL = 30_000;
 
-const CACHE_BATCH_SIZE = 50;
+const CACHE_BATCH_SIZE = CONTRACT_PAGE_SIZE_CAP;
 
 async function getCachedAgents() {
   const now = Date.now();

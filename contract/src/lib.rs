@@ -429,6 +429,8 @@ impl LodestarRegistry {
 
 #[cfg(test)]
 mod test {
+    extern crate std;
+    use std::format;
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
