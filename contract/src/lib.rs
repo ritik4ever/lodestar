@@ -281,24 +281,37 @@ impl LodestarRegistry {
             .unwrap_or_else(|| vec![&env]);
 
         let mut result: Vec<ServiceEntry> = vec![&env];
-        let total_ids = ids.len() as usize;
-        let mut active_count = 0;
-        let mut found_count = 0;
-        let target_skip = page as usize * page_size as usize;
+        let total_ids = ids.len();
+        let mut active_count: u32 = 0;
+        let mut found_count: u32 = 0;
+        // Saturate rather than wrap: on wasm32 `usize` is 32 bits (same
+        // width as u32), so a plain `page * page_size` can overflow.
+        // Saturating pins an out-of-range `page` to u32::MAX, which
+        // `active_count` (bounded by the number of active services) can
+        // never reach, so the loop below falls through and returns an
+        // empty page instead of panicking or wrapping to page 0.
+        let target_skip: u32 = page.saturating_mul(page_size);
+
+        // Short-circuit: if the skip target is already past every id
+        // (active or not), no amount of walking can reach it — skip the
+        // storage reads.
+        if target_skip >= total_ids {
+            return result;
+        }
 
         // Walk through all services, counting active ones until we reach our page
         for i in 0..total_ids {
             if let Some(entry) = env
                 .storage()
                 .persistent()
-                .get::<DataKey, ServiceEntry>(&DataKey::Service(ids.get(i as u32).unwrap()))
+                .get::<DataKey, ServiceEntry>(&DataKey::Service(ids.get(i).unwrap()))
             {
                 if entry.active {
                     if active_count >= target_skip {
                         // We're in the target page range
                         result.push_back(entry);
                         found_count += 1;
-                        if found_count >= page_size as usize {
+                        if found_count >= page_size {
                             break;
                         }
                     }
@@ -692,6 +705,29 @@ mod test {
             // Test beyond available pages
             let page2 = LodestarRegistry::list_services_page(env, 2, 3);
             assert_eq!(page2.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_list_services_page_large_page_number() {
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        env.clone().as_contract(&contract_id, || {
+            let provider = Address::generate(&env);
+
+            for i in 1..=5 {
+                setup_service(&env, i, &provider, "compute", 0, true);
+            }
+
+            // page = u32::MAX must not overflow/panic and must not wrap to
+            // page 0 data — it should return an empty page.
+            let result = LodestarRegistry::list_services_page(env.clone(), u32::MAX, 3);
+            assert_eq!(result.len(), 0);
+
+            // A page just past the last real page should also come back empty.
+            let result = LodestarRegistry::list_services_page(env, 100, 3);
+            assert_eq!(result.len(), 0);
         });
     }
 
