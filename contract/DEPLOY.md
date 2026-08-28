@@ -51,26 +51,25 @@ The compiled WASM files will be at:
 
 ## 5. Deploy the agents contract first
 
-The registry is wired to the agents contract **at deploy time** (next step), so
-the agents contract must exist first. See [contract/agents/DEPLOY.md](./agents/DEPLOY.md)
-for full details on the agents contract.
+The registry needs the agents contract address at deploy time, so the agents
+contract must exist first. Deploy it with a placeholder registry address — the
+admin will wire the real address in a later step via the admin-gated setter.
+See [contract/agents/DEPLOY.md](./agents/DEPLOY.md) for full details.
 
 ```sh
 stellar contract deploy \
   --wasm contract/agents/target/wasm32v1-none/release/lodestar_agents.wasm \
   --source deployer \
   --network testnet \
-  -- --admin <ADMIN_ADDRESS>
+  -- --admin <ADMIN_ADDRESS> --registry_contract <ADMIN_ADDRESS>
 ```
 
 Copy the printed agent contract ID — referred to below as `<AGENTS_CONTRACT_ID>`.
 
 ## 6. Deploy the registry contract
 
-Pass the agents contract ID as the registry's **constructor argument**. This is
-the only place reputation-voting authorization is configured: the agents address
-is fixed at deployment and can never be changed or hijacked by a later caller, so
-there is no separate (front-runnable) `init` step.
+Pass the agents contract ID as the registry's **constructor argument**. The
+agents address is fixed at deployment and can never be changed or hijacked.
 
 ```sh
 stellar contract deploy \
@@ -100,17 +99,17 @@ sha256sum contract/target/wasm32-unknown-unknown/release/lodestar_registry.wasm
 The file is checked into version control so every contributor points at the
 same deployment and can independently verify the WASM hash on-chain.
 
-## 7. Point the agents contract at the registry
+## 7. Wire the agents contract to the registry
 
-The agents contract verifies service providers against the registry, so link it
-back (one-time):
+The agents contract was deployed with a placeholder registry address. Now that
+the registry is deployed, the admin sets the real address:
 
 ```sh
 stellar contract invoke \
   --id <AGENTS_CONTRACT_ID> \
   --source deployer \
   --network testnet \
-  -- init --registry_contract <CONTRACT_ID>
+  -- set_registry_contract --registry_contract <CONTRACT_ID> --caller <ADMIN_ADDRESS>
 ```
 
 ## 8. Configure environment

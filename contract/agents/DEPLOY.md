@@ -14,15 +14,16 @@ The compiled WASM file will be at:
 
 ## 2. Deploy
 
-Pass the admin address as the contract's **constructor argument**. This address
-will have permission to flag agents or deactivate them administratively.
+Pass the admin address as the contract's **constructor argument**. The registry
+address can also be passed in the constructor if known at deploy time, or set
+later by the admin.
 
 ```sh
 stellar contract deploy \
   --wasm target/wasm32v1-none/release/lodestar_agents.wasm \
   --source deployer \
   --network testnet \
-  -- --admin <ADMIN_ADDRESS>
+  -- --admin <ADMIN_ADDRESS> --registry_contract <ADMIN_ADDRESS>
 ```
 
 Copy the printed agent contract ID — referred to below as `<AGENTS_CONTRACT_ID>`.
@@ -45,17 +46,17 @@ sha256sum contract/agents/target/wasm32v1-none/release/lodestar_agents.wasm
 The file is checked into version control so every contributor points at the
 same deployment and can independently verify the WASM hash on-chain.
 
-## 3. Initialization
+## 3. Wire the registry address (if not set in constructor)
 
-The agents contract needs to know the address of the service registry to verify
-service providers during `record_payment`. This is a one-time setup:
+If the registry wasn't known at deploy time, the admin must call this after
+the registry is deployed:
 
 ```sh
 stellar contract invoke \
   --id <AGENTS_CONTRACT_ID> \
   --source deployer \
   --network testnet \
-  -- init --registry_contract <REGISTRY_CONTRACT_ID>
+  -- set_registry_contract --registry_contract <REGISTRY_CONTRACT_ID> --caller <ADMIN_ADDRESS>
 ```
 
 ## 4. Post-Deployment Seed
