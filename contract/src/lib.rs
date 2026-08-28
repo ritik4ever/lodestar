@@ -44,6 +44,12 @@ pub struct ReputationEntry {
 #[contracttype]
 pub enum DataKey {
     Counter,
+    // Number of currently-active services. Unlike `Counter` (which counts
+    // every service ever registered, deactivated ones included), this tracks
+    // the live set: incremented by `register_service`, decremented by
+    // `deactivate_service` on the active → inactive transition. Clients use it
+    // to compute exact pagination bounds without walking the registry.
+    ActiveCount,
     ServiceIds,
     Service(u64),
     ServiceIdsByCategory(String),
@@ -227,6 +233,20 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Counter, MAX_TTL, MAX_TTL);
+
+        // A new service is active by definition: keep the active-service count
+        // in sync so `get_active_service_count` stays an exact pagination bound.
+        let active_count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ActiveCount)
+            .unwrap_or(0u64);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ActiveCount, &(active_count + 1));
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::ActiveCount, MAX_TTL, MAX_TTL);
 
         let mut ids: Vec<u64> = env
             .storage()
@@ -510,6 +530,7 @@ impl LodestarRegistry {
             "Only the provider can deactivate this service"
         );
 
+        let was_active = entry.active;
         entry.active = false;
         env.storage()
             .persistent()
@@ -517,6 +538,23 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Service(id), MAX_TTL, MAX_TTL);
+
+        // Decrement the active count only on the active → inactive transition,
+        // so deactivating an already-inactive service is idempotent and the
+        // count can never drift from (or underflow below) the real active set.
+        if was_active {
+            let active_count: u64 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ActiveCount)
+                .unwrap_or(0u64);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ActiveCount, &active_count.saturating_sub(1));
+            env.storage()
+                .persistent()
+                .extend_ttl(&DataKey::ActiveCount, MAX_TTL, MAX_TTL);
+        }
 
         // Remove from category index
         let cat_key = DataKey::ServiceIdsByCategory(entry.category.clone());
@@ -569,10 +607,25 @@ impl LodestarRegistry {
         );
     }
 
+    /// Number of services ever registered, deactivated ones included (the
+    /// monotonically increasing `Counter`).
     pub fn get_service_count(env: Env) -> u64 {
         env.storage()
             .persistent()
             .get(&DataKey::Counter)
+            .unwrap_or(0u64)
+    }
+
+    /// Number of **currently-active** services, maintained incrementally by
+    /// `register_service` (increment) and `deactivate_service` (decrement).
+    ///
+    /// Unlike `get_service_count`, this is exact after arbitrary register /
+    /// deactivate sequences (repeat deactivations are idempotent), so clients
+    /// can compute pagination bounds in O(1) without walking the registry.
+    pub fn get_active_service_count(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ActiveCount)
             .unwrap_or(0u64)
     }
 
@@ -657,6 +710,17 @@ mod test {
             env.storage()
                 .persistent()
                 .set(&DataKey::SortedServiceIdsByCategory(cat), &sorted_cat);
+
+            // Mirror production: an active entry counts toward the
+            // active-service counter.
+            let active_count: u64 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ActiveCount)
+                .unwrap_or(0u64);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ActiveCount, &(active_count + 1));
         }
     }
 
@@ -1685,5 +1749,198 @@ mod test {
         let (min, max) = registry.get_reputation_bounds();
         assert_eq!(min, MIN_REPUTATION);
         assert_eq!(max, MAX_REPUTATION);
+    }
+
+    // ── get_active_service_count tests (#300) ─────────────────────────────────
+
+    #[test]
+    fn test_get_active_service_count_empty() {
+        let env = Env::default();
+        let registry_id = env.register(LodestarRegistry, (Address::generate(&env),));
+        let registry = LodestarRegistryClient::new(&env, &registry_id);
+
+        assert_eq!(registry.get_active_service_count(), 0);
+        assert_eq!(registry.get_service_count(), 0);
+    }
+
+    #[test]
+    fn test_get_active_service_count_tracks_registrations() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+
+        for expected in 1..=3u64 {
+            register_a_service(&env, &registry);
+            assert_eq!(registry.get_active_service_count(), expected);
+            assert_eq!(registry.get_service_count(), expected);
+        }
+    }
+
+    #[test]
+    fn test_get_active_service_count_decrements_on_deactivate() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+
+        let mut providers: Vec<Address> = vec![&env];
+        for _ in 0..3u64 {
+            let provider = Address::generate(&env);
+            registry.register_service(
+                &provider,
+                &String::from_str(&env, "Test Service"),
+                &String::from_str(&env, "Test Description"),
+                &String::from_str(&env, "https://test.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_TEST_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            );
+            providers.push_back(provider);
+        }
+        assert_eq!(registry.get_active_service_count(), 3);
+        assert_eq!(registry.get_service_count(), 3);
+
+        // Deactivating one service removes it from the active set only.
+        registry.deactivate_service(&providers.get(0).unwrap(), &1u64);
+        assert_eq!(registry.get_active_service_count(), 2);
+        assert_eq!(
+            registry.get_service_count(),
+            3,
+            "the all-time counter still counts the deactivated service"
+        );
+    }
+
+    #[test]
+    fn test_get_active_service_count_double_deactivate_is_idempotent() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+
+        let provider = Address::generate(&env);
+        registry.register_service(
+            &provider,
+            &String::from_str(&env, "Test Service"),
+            &String::from_str(&env, "Test Description"),
+            &String::from_str(&env, "https://test.com"),
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_TEST_PAYMENT"),
+            &String::from_str(&env, "compute"),
+        );
+        assert_eq!(registry.get_active_service_count(), 1);
+
+        registry.deactivate_service(&provider, &1u64);
+        assert_eq!(registry.get_active_service_count(), 0);
+
+        // Deactivating an already-inactive service must not decrement again.
+        registry.deactivate_service(&provider, &1u64);
+        assert_eq!(registry.get_active_service_count(), 0);
+    }
+
+    #[test]
+    fn test_get_active_service_count_setup_service_mirrors_production() {
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        env.clone().as_contract(&contract_id, || {
+            let provider = Address::generate(&env);
+
+            // Active entries count toward the counter; the pre-deactivated
+            // entry (active = false) does not.
+            setup_service(&env, 1, &provider, "compute", 0, true);
+            setup_service(&env, 2, &provider, "compute", 0, false);
+            setup_service(&env, 3, &provider, "compute", 0, true);
+
+            assert_eq!(LodestarRegistry::get_active_service_count(env.clone()), 2);
+        });
+    }
+
+    // Deterministic LCG (Numerical Recipes constants) so property-test
+    // failures reproduce run-to-run without pulling in an external proptest
+    // dependency.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0
+        }
+    }
+
+    /// Ground-truth active count: scan the insertion-ordered `ServiceIds` and
+    /// count entries whose stored `active` flag is true. Independent of the
+    /// `ActiveCount` counter, so it can serve as the oracle for it.
+    fn count_active_services(env: &Env) -> u64 {
+        let ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ServiceIds)
+            .unwrap_or_else(|| vec![env]);
+        let mut count = 0u64;
+        let mut i = 0u32;
+        while i < ids.len() {
+            if let Some(entry) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, ServiceEntry>(&DataKey::Service(ids.get(i).unwrap()))
+            {
+                if entry.active {
+                    count += 1;
+                }
+            }
+            i += 1;
+        }
+        count
+    }
+
+    #[test]
+    fn test_get_active_service_count_property_random_sequence() {
+        // Property-style test: a seeded random sequence of registrations and
+        // deactivations — including repeated deactivations of the same service
+        // — must leave `get_active_service_count` exactly equal to the number
+        // of active services stored on-chain after every single operation.
+        let env = Env::default();
+        env.mock_all_auths();
+        let agents_id = env.register(MockAgents, ());
+        let registry_id = env.register(LodestarRegistry, (agents_id,));
+        let registry = LodestarRegistryClient::new(&env, &registry_id);
+
+        let mut rng = Lcg(0x285_300_2853);
+        let mut ids: Vec<u64> = vec![&env];
+        let mut providers: Vec<Address> = vec![&env];
+
+        for _step in 0..80u64 {
+            if ids.len() == 0 || rng.next() % 3 != 0 {
+                // Register a new service (fresh provider, so no duplicate clash).
+                let provider = Address::generate(&env);
+                let id = registry.register_service(
+                    &provider,
+                    &String::from_str(&env, "Prop Service"),
+                    &String::from_str(&env, "Property test description"),
+                    &String::from_str(&env, "https://prop.test"),
+                    &String::from_str(&env, "10"),
+                    &String::from_str(&env, "G_PAYMENT"),
+                    &String::from_str(&env, "compute"),
+                );
+                ids.push_back(id);
+                providers.push_back(provider);
+            } else {
+                // Deactivate a random registered service — possibly one that is
+                // already inactive, which must be idempotent for the counter.
+                let idx = (rng.next() % ids.len() as u64) as u32;
+                let id = ids.get(idx).unwrap();
+                let provider = providers.get(idx).unwrap();
+                registry.deactivate_service(&provider, &id);
+            }
+
+            env.clone().as_contract(&registry_id, || {
+                assert_eq!(
+                    LodestarRegistry::get_active_service_count(env.clone()),
+                    count_active_services(&env),
+                    "active count must equal the stored active set after every op"
+                );
+            });
+        }
     }
 }
