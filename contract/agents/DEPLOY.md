@@ -58,7 +58,31 @@ stellar contract invoke \
   -- init --registry_contract <REGISTRY_CONTRACT_ID>
 ```
 
-## 4. Post-Deployment Seed
+## 4. Agent Registration
+
+Two entry points register agents:
+
+- **`register_agent(agent_address, name, description, owner)`** — self-service.
+  Requires `owner.require_auth()` **and** `agent_address == owner`, so a caller
+  can only register an agent for an address they control. This blocks
+  front-running (a third party registering an address they do not control and
+  capturing ownership).
+
+- **`register_agent_for(caller, agent_address, name, description, owner)`** —
+  admin-only. `caller` must be the contract's admin (set via `--admin` at
+  deploy). The backend uses this path for server-side registration: the
+  backend's `registerAgentOnChain` signs with the server keypair, which must be
+  the contract admin.
+
+### Backend flow
+
+`registerAgentOnChain(agentAddress, name, description)` in
+`backend/src/lib/contract.js` calls `register_agent_for` signed by the server
+keypair. Ensure the server keypair is the agents contract admin
+(`AGENTS_CONTRACT_ID` deployment). The owner recorded is the agent's own wallet
+address (self-owned).
+
+## 5. Post-Deployment Seed
 
 To populate the network with demo agents and payment history, run the seed script:
 
