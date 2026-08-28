@@ -35,16 +35,18 @@ function validate(f: FormState): Record<string, string> {
   const errors: Record<string, string> = {};
   
   const trimmedName = f.name.trim();
-  if (trimmedName.length < 3 || trimmedName.length > 50)
-    errors.name = 'Name must be 3–50 characters';
+  if (trimmedName.length < 3 || trimmedName.length > 64)
+    errors.name = 'Name must be 3–64 characters';
   
   const trimmedDescription = f.description.trim();
-  if (trimmedDescription.length < 10 || trimmedDescription.length > 200)
-    errors.description = 'Description must be 10–200 characters';
+  if (trimmedDescription.length < 10 || trimmedDescription.length > 256)
+    errors.description = 'Description must be 10–256 characters';
   
   const trimmedEndpoint = f.endpoint.trim();
   if (!trimmedEndpoint.startsWith('https://'))
     errors.endpoint = 'Endpoint must start with https://';
+  else if (trimmedEndpoint.length > 256)
+    errors.endpoint = 'Endpoint must be at most 256 characters';
   
   const trimmedPrice = f.price_usdc.trim();
   if (trimmedPrice.length === 0 || trimmedPrice !== f.price_usdc || !PRICE_USDC_REGEX.test(trimmedPrice)) {
@@ -152,7 +154,7 @@ export default function RegisterForm({ walletAddress }: Props) {
       <Field
         label="Service Name"
         error={errors.name}
-        hint="3–50 characters"
+        hint="3–64 characters"
       >
         <input
           type="text"
@@ -167,7 +169,7 @@ export default function RegisterForm({ walletAddress }: Props) {
       <Field
         label="Description"
         error={errors.description}
-        hint="10–200 characters"
+        hint="10–256 characters"
       >
         <textarea
           rows={3}
@@ -182,7 +184,7 @@ export default function RegisterForm({ walletAddress }: Props) {
       <Field
         label="Endpoint URL"
         error={errors.endpoint}
-        hint="Must start with https://"
+        hint="https://, max 256 characters"
       >
         <input
           type="url"
