@@ -1,0 +1,22 @@
+name: Tracked env file check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tracked-env-check:
+    name: Tracked env file check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Fail if .env files are tracked
+        run: node tools/check-tracked-env.cjs
