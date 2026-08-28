@@ -26,6 +26,15 @@ const PAGE_SIZE = 20;
 const SERVICE_CATEGORIES = new Set(["search", "weather", "finance", "ai", "data", "compute"]);
 const PRICE_USDC_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
+function isValidHttpsUrl(value) {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function normalizePriceUsdc(value) {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return null;
@@ -48,19 +57,6 @@ function normalizePriceUsdc(value) {
   return normalized;
 }
 
-/**
- * Annotate a service entry with a ttl_warning flag.
- * Returns true when the estimated remaining TTL falls below
- * SERVICE_TTL_WARNING_LEDGERS. Omits the field when currentLedger
- * is unavailable so callers treat absence as "no warning data".
- */
-function annotateTtlWarning(service, currentLedger) {
-  if (currentLedger == null) return service;
-  const expiry = service.registered_at + SERVICE_MAX_TTL;
-  const warnOnset = expiry - SERVICE_TTL_WARNING_LEDGERS;
-  return { ...service, ttl_warning: currentLedger >= warnOnset };
-}
-
 function parsePositiveSafeInteger(value) {
   if (typeof value === "number") {
     return Number.isSafeInteger(value) && value > 0 ? value : null;
@@ -74,9 +70,6 @@ function parsePositiveSafeInteger(value) {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-// Appends ttl_warning:true when the entry's estimated remaining TTL falls
-// below SERVICE_TTL_WARNING_LEDGERS. Omits the field entirely when currentLedger
-// is unavailable so callers can always treat absence as "no warning data".
 function parseFiniteNumericValue(value) {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -90,6 +83,9 @@ function parseFiniteNumericValue(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// Appends ttl_warning:true when the entry's estimated remaining TTL falls
+// below SERVICE_TTL_WARNING_LEDGERS. Omits the field entirely when currentLedger
+// is unavailable so callers can always treat absence as "no warning data".
 function annotateTtlWarning(service, currentLedger) {
   const parsedCurrentLedger = parseFiniteNumericValue(currentLedger);
   const registeredAt = parseFiniteNumericValue(service?.registered_at);
@@ -369,8 +365,8 @@ router.post("/registry/prepare-register", writeRateLimiter(), async (req, res) =
     if (typeof description !== "string" || description.trim().length < 10 || description.trim().length > 256) {
       return res.status(400).json({ error: "`description` must be 10-256 characters", code: "INVALID_BODY" });
     }
-    if (typeof endpoint !== "string" || !endpoint.startsWith("https://")) {
-      return res.status(400).json({ error: "`endpoint` must start with https://", code: "INVALID_BODY" });
+    if (typeof endpoint !== "string" || !isValidHttpsUrl(endpoint.trim())) {
+      return res.status(400).json({ error: "`endpoint` must be a valid https:// URL", code: "INVALID_BODY" });
     }
     if (!SERVICE_CATEGORIES.has(category)) {
       return res.status(400).json({ error: "`category` is invalid", code: "INVALID_BODY" });
