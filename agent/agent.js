@@ -277,8 +277,17 @@ function buildHttpClient() {
 
 // ── Registry helpers ──────────────────────────────────────────────────────────
 
+// The registry's `list_services` pages are slices of a globally
+// reputation-ordered leaderboard (reputation desc, ties by registration): page
+// 0 always holds the top-reputation active services for the category. Request
+// the contract's maximum page size so the selection below runs over the widest
+// leaderboard slice, not just the backend's default first page.
+const SERVICES_PAGE_LIMIT = 50;
+
 async function fetchServices(category) {
-  const res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/services?category=${category}`);
+  const res = await fetchWithTimeout(
+    `${LODESTAR_API_URL}/api/services?category=${category}&limit=${SERVICES_PAGE_LIMIT}`
+  );
   if (!res.ok) throw new Error(`Registry fetch failed: ${res.status}`);
   const body = await res.json();
   return body.services ?? [];
@@ -343,7 +352,9 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
     return { success: false, priceUsdc: null };
   }
 
-  // Top-N candidates by reputation; weighted random selection reduces single-point manipulation.
+  // The fetched page is the top of the global reputation leaderboard, so these
+  // are the true top-N candidates; weighted random selection reduces
+  // single-point manipulation.
   const candidates = [...eligible].sort((a, b) => b.reputation - a.reputation).slice(0, maxRetries);
   const failed = new Set();
 

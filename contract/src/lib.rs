@@ -30,12 +30,31 @@ pub struct ServiceEntry {
     pub registered_at: u64,
 }
 
+// Compact (id, reputation) pair stored in the reputation-ordered leaderboard
+// indexes. Keeping the reputation inline means ordering comparisons never need
+// to re-read the full ServiceEntry from storage — the whole index loads as a
+// single Vec and every comparison is an in-memory host operation.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReputationEntry {
+    pub id: u64,
+    pub reputation: i32,
+}
+
 #[contracttype]
 pub enum DataKey {
     Counter,
     ServiceIds,
     Service(u64),
     ServiceIdsByCategory(String),
+    // Global reputation-ordered leaderboard: `Vec<ReputationEntry>` sorted by
+    // (reputation desc, id asc). Pages returned by `list_services` are slices
+    // of this index, so page 0 always holds the top-reputation active services.
+    // Maintained incrementally by register_service / update_reputation /
+    // deactivate_service; never re-sorted per page.
+    SortedServiceIds,
+    // Per-category reputation-ordered leaderboard, same ordering as above.
+    SortedServiceIdsByCategory(String),
     // Address of the LodestarAgents contract, used to verify that a reputation
     // voter is a registered agent via a cross-contract `is_registered` call.
     AgentsContract,
@@ -66,6 +85,49 @@ fn active_service_exists(env: &Env, provider: &Address, endpoint: &String) -> bo
         i += 1;
     }
 
+    false
+}
+
+// ── Reputation-ordered leaderboard helpers ───────────────────────────────────
+//
+// `list_services` pages are slices of a globally reputation-ordered index
+// (`SortedServiceIds` / `SortedServiceIdsByCategory`) instead of a re-sort of
+// each page slice, so page 0 always holds the top-reputation active services no
+// matter how many pages the registry spans. The index is maintained
+// incrementally on every write: `register_service` inserts, `update_reputation`
+// repositions, and `deactivate_service` removes. Ordering is
+// (reputation desc, id asc) — ids increase monotonically with registration, so
+// ties resolve to registration order, matching the historical stable sort.
+
+/// Position at which `(id, reputation)` belongs in a reputation-descending vec
+/// with ties broken by ascending id. Valid in the inclusive range 0..=len.
+fn reputation_position(ids: &Vec<ReputationEntry>, id: u64, reputation: i32) -> u32 {
+    let mut pos = 0u32;
+    while pos < ids.len() {
+        let other = ids.get(pos).unwrap();
+        if reputation > other.reputation || (reputation == other.reputation && id < other.id) {
+            break;
+        }
+        pos += 1;
+    }
+    pos
+}
+
+fn insert_reputation_entry(ids: &mut Vec<ReputationEntry>, id: u64, reputation: i32) {
+    let pos = reputation_position(ids, id, reputation);
+    ids.insert(pos, ReputationEntry { id, reputation });
+}
+
+/// Remove `id` from the ordered vec, returning whether it was present.
+fn remove_reputation_entry(ids: &mut Vec<ReputationEntry>, id: u64) -> bool {
+    let mut i = 0u32;
+    while i < ids.len() {
+        if ids.get(i).unwrap().id == id {
+            ids.remove(i);
+            return true;
+        }
+        i += 1;
+    }
     false
 }
 
@@ -122,14 +184,8 @@ impl LodestarRegistry {
             endpoint.len() <= 256,
             "endpoint must be at most 256 characters"
         );
-        assert!(
-            category.len() >= 1,
-            "category must be 1-32 characters"
-        );
-        assert!(
-            category.len() <= 32,
-            "category must be 1-32 characters"
-        );
+        assert!(category.len() >= 1, "category must be 1-32 characters");
+        assert!(category.len() <= 32, "category must be 1-32 characters");
 
         assert!(
             !active_service_exists(&env, &provider, &endpoint),
@@ -193,7 +249,39 @@ impl LodestarRegistry {
             .persistent()
             .set(&DataKey::ServiceIdsByCategory(cat.clone()), &cat_ids);
         env.storage().persistent().extend_ttl(
-            &DataKey::ServiceIdsByCategory(cat),
+            &DataKey::ServiceIdsByCategory(cat.clone()),
+            MAX_TTL,
+            MAX_TTL,
+        );
+
+        // Maintain the reputation-ordered leaderboards. A new service starts at
+        // reputation 0, so it lands after every existing entry with reputation
+        // >= 0 (ties keep registration order) and before any negative ones.
+        let mut sorted_ids: Vec<ReputationEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SortedServiceIds)
+            .unwrap_or_else(|| vec![&env]);
+        insert_reputation_entry(&mut sorted_ids, new_id, 0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SortedServiceIds, &sorted_ids);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::SortedServiceIds, MAX_TTL, MAX_TTL);
+
+        let mut sorted_cat_ids: Vec<ReputationEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SortedServiceIdsByCategory(cat.clone()))
+            .unwrap_or_else(|| vec![&env]);
+        insert_reputation_entry(&mut sorted_cat_ids, new_id, 0);
+        env.storage().persistent().set(
+            &DataKey::SortedServiceIdsByCategory(cat.clone()),
+            &sorted_cat_ids,
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::SortedServiceIdsByCategory(cat),
             MAX_TTL,
             MAX_TTL,
         );
@@ -208,6 +296,21 @@ impl LodestarRegistry {
             .expect("Service not found")
     }
 
+    /// List active services in **global reputation order** — reputation
+    /// descending, ties broken by registration order (ascending id).
+    ///
+    /// Pages are slices of an on-chain leaderboard index maintained
+    /// incrementally by `register_service`, `update_reputation`, and
+    /// `deactivate_service`; the page slice itself is never re-sorted. That
+    /// makes the ordering a property of the whole registry, not of a single
+    /// page: **page 0 always holds the top-reputation active services**
+    /// regardless of how many pages the registry spans, so an agent that reads
+    /// page 0 and takes the first entry picks the best service overall rather
+    /// than the best of the oldest registrations.
+    ///
+    /// `offset`/`limit` bound the slice (limit is clamped to 1..=50); when
+    /// `category` is given, the same globally-ordered leaderboard is filtered
+    /// to that category, and page 0 is that category's top-reputation page.
     pub fn list_services(
         env: Env,
         offset: u32,
@@ -217,19 +320,19 @@ impl LodestarRegistry {
         let limit = limit.min(50u32).max(1u32);
         let start: u32 = offset;
 
-        let ids: Vec<u64> = if let Some(ref cat) = category {
+        let ranked: Vec<ReputationEntry> = if let Some(ref cat) = category {
             env.storage()
                 .persistent()
-                .get(&DataKey::ServiceIdsByCategory(cat.clone()))
+                .get(&DataKey::SortedServiceIdsByCategory(cat.clone()))
                 .unwrap_or_else(|| vec![&env])
         } else {
             env.storage()
                 .persistent()
-                .get(&DataKey::ServiceIds)
+                .get(&DataKey::SortedServiceIds)
                 .unwrap_or_else(|| vec![&env])
         };
 
-        let total = ids.len();
+        let total = ranked.len();
         let end = (start + limit).min(total);
 
         let mut services: Vec<ServiceEntry> = vec![&env];
@@ -238,8 +341,10 @@ impl LodestarRegistry {
             if let Some(entry) = env
                 .storage()
                 .persistent()
-                .get::<DataKey, ServiceEntry>(&DataKey::Service(ids.get(i).unwrap()))
+                .get::<DataKey, ServiceEntry>(&DataKey::Service(ranked.get(i).unwrap().id))
             {
+                // Deactivation removes entries from the leaderboard, so this
+                // filter is a safety net rather than the ordering mechanism.
                 if entry.active {
                     services.push_back(entry);
                 }
@@ -247,33 +352,17 @@ impl LodestarRegistry {
             i += 1;
         }
 
-        // Insertion sort by reputation descending
-        let len = services.len();
-        for i in 1..len {
-            let mut j = i;
-            while j > 0 {
-                let a = services.get(j - 1).unwrap();
-                let b = services.get(j).unwrap();
-                if a.reputation >= b.reputation {
-                    break;
-                }
-                services.set(j - 1, b);
-                services.set(j, a);
-                j -= 1;
-            }
-        }
-
         services
     }
 
     /// List a single page of services in registration order, filtering only active services.
     /// This avoids the pagination bug where inactive services cause short pages.
-    /// 
+    ///
     /// Unlike list_services, this function ensures that every page except the last
     /// contains exactly page_size entries when enough active services exist.
     pub fn list_services_page(env: Env, page: u32, page_size: u32) -> Vec<ServiceEntry> {
         let page_size = page_size.min(20u32).max(1u32);
-        
+
         let ids: Vec<u64> = env
             .storage()
             .persistent()
@@ -368,6 +457,39 @@ impl LodestarRegistry {
             .persistent()
             .extend_ttl(&DataKey::Service(id), MAX_TTL, MAX_TTL);
 
+        // Keep the reputation-ordered leaderboards in sync: reposition the
+        // service in the global and category indexes at its new rank.
+        let mut sorted_ids: Vec<ReputationEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SortedServiceIds)
+            .unwrap_or_else(|| vec![&env]);
+        remove_reputation_entry(&mut sorted_ids, id);
+        insert_reputation_entry(&mut sorted_ids, id, entry.reputation);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SortedServiceIds, &sorted_ids);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::SortedServiceIds, MAX_TTL, MAX_TTL);
+
+        let mut sorted_cat_ids: Vec<ReputationEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SortedServiceIdsByCategory(entry.category.clone()))
+            .unwrap_or_else(|| vec![&env]);
+        remove_reputation_entry(&mut sorted_cat_ids, id);
+        insert_reputation_entry(&mut sorted_cat_ids, id, entry.reputation);
+        env.storage().persistent().set(
+            &DataKey::SortedServiceIdsByCategory(entry.category.clone()),
+            &sorted_cat_ids,
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::SortedServiceIdsByCategory(entry.category.clone()),
+            MAX_TTL,
+            MAX_TTL,
+        );
+
         env.storage().persistent().set(&vote_key, &now);
         env.storage()
             .persistent()
@@ -413,6 +535,38 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&cat_key, MAX_TTL, MAX_TTL);
+
+        // Remove from the reputation-ordered leaderboards so deactivated
+        // services never occupy a page slot (page 0 stays the top of the
+        // active leaderboard, with no gaps from inactive entries).
+        let mut sorted_ids: Vec<ReputationEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SortedServiceIds)
+            .unwrap_or_else(|| vec![&env]);
+        remove_reputation_entry(&mut sorted_ids, id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SortedServiceIds, &sorted_ids);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::SortedServiceIds, MAX_TTL, MAX_TTL);
+
+        let mut sorted_cat_ids: Vec<ReputationEntry> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SortedServiceIdsByCategory(entry.category.clone()))
+            .unwrap_or_else(|| vec![&env]);
+        remove_reputation_entry(&mut sorted_cat_ids, id);
+        env.storage().persistent().set(
+            &DataKey::SortedServiceIdsByCategory(entry.category.clone()),
+            &sorted_cat_ids,
+        );
+        env.storage().persistent().extend_ttl(
+            &DataKey::SortedServiceIdsByCategory(entry.category.clone()),
+            MAX_TTL,
+            MAX_TTL,
+        );
     }
 
     pub fn get_service_count(env: Env) -> u64 {
@@ -479,7 +633,31 @@ mod test {
         cat_ids.push_back(id);
         env.storage()
             .persistent()
-            .set(&DataKey::ServiceIdsByCategory(cat), &cat_ids);
+            .set(&DataKey::ServiceIdsByCategory(cat.clone()), &cat_ids);
+
+        // Mirror production: only active services occupy the reputation-
+        // ordered leaderboards (deactivation removes them).
+        if active {
+            let mut sorted: Vec<ReputationEntry> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::SortedServiceIds)
+                .unwrap_or_else(|| vec![env]);
+            insert_reputation_entry(&mut sorted, id, reputation);
+            env.storage()
+                .persistent()
+                .set(&DataKey::SortedServiceIds, &sorted);
+
+            let mut sorted_cat: Vec<ReputationEntry> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::SortedServiceIdsByCategory(cat.clone()))
+                .unwrap_or_else(|| vec![env]);
+            insert_reputation_entry(&mut sorted_cat, id, reputation);
+            env.storage()
+                .persistent()
+                .set(&DataKey::SortedServiceIdsByCategory(cat), &sorted_cat);
+        }
     }
 
     #[test]
@@ -664,13 +842,102 @@ mod test {
     }
 
     #[test]
+    fn test_list_services_globally_ordered_across_pages() {
+        // Acceptance criterion for #285: page 0 must hold the global
+        // top-reputation entries even when the best services were registered
+        // last and therefore land on a later page by insertion order.
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        env.clone().as_contract(&contract_id, || {
+            let provider = Address::generate(&env);
+
+            // 25 services, 20 per page. The newest five (21-25) carry the
+            // highest reputations; by insertion order they sit on page 1, but
+            // page 0 must surface them first.
+            for id in 1..=20u64 {
+                setup_service(&env, id, &provider, "compute", 0, true);
+            }
+            setup_service(&env, 21, &provider, "compute", 10, true);
+            setup_service(&env, 22, &provider, "compute", 9, true);
+            setup_service(&env, 23, &provider, "compute", 8, true);
+            setup_service(&env, 24, &provider, "compute", 7, true);
+            setup_service(&env, 25, &provider, "compute", 6, true);
+
+            let page0 = LodestarRegistry::list_services(env.clone(), 0, 20, None);
+            assert_eq!(page0.len(), 20);
+            // The global top entries lead page 0 despite being registered last.
+            assert_eq!(
+                page0.get(0).unwrap().id,
+                21,
+                "page 0 must lead with the global top-reputation entries"
+            );
+            assert_eq!(page0.get(1).unwrap().id, 22);
+            assert_eq!(page0.get(2).unwrap().id, 23);
+            assert_eq!(page0.get(3).unwrap().id, 24);
+            assert_eq!(page0.get(4).unwrap().id, 25);
+
+            let page1 = LodestarRegistry::list_services(env.clone(), 20, 20, None);
+            assert_eq!(page1.len(), 5);
+
+            // Global invariant: no entry on a later page outranks any entry on
+            // page 0.
+            let min_page0_rep = page0.iter().map(|s| s.reputation).min().unwrap();
+            let max_page1_rep = page1.iter().map(|s| s.reputation).max().unwrap();
+            assert!(min_page0_rep >= max_page1_rep);
+        });
+    }
+
+    #[test]
+    fn test_list_services_category_globally_ordered_across_pages() {
+        // Same guarantee per category: page 0 of a category is that category's
+        // top-reputation page, regardless of insertion order or of entries in
+        // other categories.
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        env.clone().as_contract(&contract_id, || {
+            let provider = Address::generate(&env);
+
+            // 20 weather services at reputation 0, then 20 compute services,
+            // then a single weather service with the highest reputation in its
+            // category (registered last).
+            for id in 1..=20u64 {
+                setup_service(&env, id, &provider, "weather", 0, true);
+            }
+            for id in 21..=40u64 {
+                setup_service(&env, id, &provider, "compute", 5, true);
+            }
+            setup_service(&env, 41, &provider, "weather", 100, true);
+
+            let weather_page0 = LodestarRegistry::list_services(
+                env.clone(),
+                0,
+                20,
+                Some(String::from_str(&env, "weather")),
+            );
+            assert_eq!(weather_page0.len(), 20);
+            assert_eq!(weather_page0.get(0).unwrap().id, 41);
+
+            let weather_page1 = LodestarRegistry::list_services(
+                env.clone(),
+                20,
+                20,
+                Some(String::from_str(&env, "weather")),
+            );
+            assert_eq!(weather_page1.len(), 1);
+            assert_eq!(weather_page1.get(0).unwrap().id, 20);
+        });
+    }
+
+    #[test]
     fn test_list_services_page_basic() {
         let env = Env::default();
         let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
 
         env.clone().as_contract(&contract_id, || {
             let provider = Address::generate(&env);
-            
+
             // Register 5 active services
             for i in 1..=5 {
                 setup_service(&env, i, &provider, "compute", 0, true);
@@ -702,7 +969,7 @@ mod test {
 
         env.clone().as_contract(&contract_id, || {
             let provider = Address::generate(&env);
-            
+
             // Register services with alternating active/inactive pattern
             // IDs 1,3,5,7,9 are active; IDs 2,4,6,8,10 are inactive
             for i in 1..=10 {
@@ -738,7 +1005,7 @@ mod test {
 
         env.clone().as_contract(&contract_id, || {
             let provider = Address::generate(&env);
-            
+
             // Register 3 inactive services
             for i in 1..=3 {
                 setup_service(&env, i, &provider, "compute", 0, false);
@@ -769,7 +1036,7 @@ mod test {
 
         env.clone().as_contract(&contract_id, || {
             let provider = Address::generate(&env);
-            
+
             // Register 5 active services
             for i in 1..=5 {
                 setup_service(&env, i, &provider, "compute", 0, true);
@@ -1051,6 +1318,127 @@ mod test {
         assert_eq!(registry.get_service(&1u64).reputation, MIN_REPUTATION);
     }
 
+    #[test]
+    fn test_update_reputation_reorders_leaderboard() {
+        // A vote that changes a service's rank must move it in the global
+        // leaderboard, not just in the page it happened to be on.
+        let env = Env::default();
+        env.mock_all_auths();
+        let agents_id = env.register(MockAgents, ());
+        let agents = MockAgentsClient::new(&env, &agents_id);
+        let registry_id = env.register(LodestarRegistry, (agents_id,));
+        let registry = LodestarRegistryClient::new(&env, &registry_id);
+
+        let provider = Address::generate(&env);
+        let id1 = registry.register_service(
+            &provider,
+            &String::from_str(&env, "Svc One"),
+            &String::from_str(&env, "Test Description"),
+            &String::from_str(&env, "https://one.example.com"),
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_PAYMENT"),
+            &String::from_str(&env, "compute"),
+        );
+        let id2 = registry.register_service(
+            &provider,
+            &String::from_str(&env, "Svc Two"),
+            &String::from_str(&env, "Test Description"),
+            &String::from_str(&env, "https://two.example.com"),
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_PAYMENT"),
+            &String::from_str(&env, "compute"),
+        );
+        let id3 = registry.register_service(
+            &provider,
+            &String::from_str(&env, "Svc Three"),
+            &String::from_str(&env, "Test Description"),
+            &String::from_str(&env, "https://three.example.com"),
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_PAYMENT"),
+            &String::from_str(&env, "compute"),
+        );
+
+        let agent = Address::generate(&env);
+        agents.set_registered(&agent, &true);
+
+        // Boost id2 twice so it outranks the two reputation-0 services.
+        registry.update_reputation(&id2, &true, &agent);
+        env.ledger()
+            .with_mut(|li| li.sequence_number += VOTE_COOLDOWN_LEDGERS as u32 + 1);
+        registry.update_reputation(&id2, &true, &agent);
+
+        env.clone().as_contract(&registry_id, || {
+            let page0 = LodestarRegistry::list_services(env.clone(), 0, 20, None);
+            assert_eq!(page0.len(), 3);
+            assert_eq!(
+                page0.get(0).unwrap().id,
+                id2,
+                "top voter must lead page 0 after re-ranking"
+            );
+            // Ties keep registration order.
+            assert_eq!(page0.get(1).unwrap().id, id1);
+            assert_eq!(page0.get(2).unwrap().id, id3);
+        });
+    }
+
+    #[test]
+    fn test_deactivate_removes_service_from_leaderboard() {
+        // Deactivated services must leave the leaderboard entirely so page 0
+        // stays the top of the *active* leaderboard with no gaps.
+        let env = Env::default();
+        env.mock_all_auths();
+        let agents_id = env.register(MockAgents, ());
+        let agents = MockAgentsClient::new(&env, &agents_id);
+        let registry_id = env.register(LodestarRegistry, (agents_id,));
+        let registry = LodestarRegistryClient::new(&env, &registry_id);
+
+        let provider = Address::generate(&env);
+        let id1 = registry.register_service(
+            &provider,
+            &String::from_str(&env, "Svc One"),
+            &String::from_str(&env, "Test Description"),
+            &String::from_str(&env, "https://one.example.com"),
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_PAYMENT"),
+            &String::from_str(&env, "compute"),
+        );
+        let id2 = registry.register_service(
+            &provider,
+            &String::from_str(&env, "Svc Two"),
+            &String::from_str(&env, "Test Description"),
+            &String::from_str(&env, "https://two.example.com"),
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_PAYMENT"),
+            &String::from_str(&env, "compute"),
+        );
+
+        let agent = Address::generate(&env);
+        agents.set_registered(&agent, &true);
+
+        // Make id1 the top entry, then deactivate it.
+        registry.update_reputation(&id1, &true, &agent);
+        env.ledger()
+            .with_mut(|li| li.sequence_number += VOTE_COOLDOWN_LEDGERS as u32 + 1);
+        registry.update_reputation(&id1, &true, &agent);
+
+        env.clone().as_contract(&registry_id, || {
+            let before = LodestarRegistry::list_services(env.clone(), 0, 20, None);
+            assert_eq!(before.get(0).unwrap().id, id1);
+        });
+
+        registry.deactivate_service(&provider, &id1);
+
+        env.clone().as_contract(&registry_id, || {
+            let after = LodestarRegistry::list_services(env.clone(), 0, 20, None);
+            assert_eq!(after.len(), 1);
+            assert_eq!(
+                after.get(0).unwrap().id,
+                id2,
+                "next-best service must take the top slot after deactivation"
+            );
+        });
+    }
+
     // ── register_service input validation tests ───────────────────────────
 
     #[test]
@@ -1186,7 +1574,10 @@ mod test {
         let (registry, _agents) = deploy_registry(&env);
         let provider = Address::generate(&env);
 
-        let long_endpoint = format!("https://example.com/{}", "A".repeat(257));
+        // format! is std-only and unavailable in this no_std crate; a
+        // 257-char string of a single character is enough to trip the length
+        // cap (the contract does not validate the https:// prefix).
+        let long_endpoint = "A".repeat(257);
         assert!(registry
             .try_register_service(
                 &provider,
@@ -1207,8 +1598,8 @@ mod test {
         let (registry, _agents) = deploy_registry(&env);
         let provider = Address::generate(&env);
 
-        // endpoint = https:// + 248 chars = 256 total
-        let max_endpoint = format!("https://{}", "A".repeat(248));
+        // endpoint at exactly the 256-char cap
+        let max_endpoint = "A".repeat(256);
         assert_eq!(max_endpoint.len(), 256);
         assert!(registry
             .try_register_service(

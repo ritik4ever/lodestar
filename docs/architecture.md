@@ -41,7 +41,7 @@ This document covers the component responsibilities, data flow, trust boundaries
 1. **Service Registration:**
    `Provider (Frontend)` -> `Backend (prepare-register)` -> `Provider (signs XDR)` -> `Backend (submit-signed-tx)` -> `LodestarRegistry (stores ServiceEntry)`
 2. **Discovery & Access:**
-   `AI Agent` -> `LodestarRegistry (list_services)` -> Returns active endpoints sorted by reputation.
+   `AI Agent` -> `LodestarRegistry (list_services)` -> Returns active endpoints in **global reputation order** (reputation descending, ties by registration). Page 0 always holds the top-reputation active services because pages are slices of a maintained on-chain leaderboard index (`SortedServiceIds` / `SortedServiceIdsByCategory`), kept in sync by `register_service`, `update_reputation`, and `deactivate_service` — the per-page slice is never re-sorted.
 3. **Payment & Consumption:**
    `AI Agent` -> `Service Endpoint (GET)` -> Returns `402 Payment Required`.
    `AI Agent` -> `Stellar Network` -> Pays via x402.
@@ -54,7 +54,7 @@ This document covers the component responsibilities, data flow, trust boundaries
 
 1. **LodestarRegistry (Soroban Contract)**
    - **Failure:** Contract runs out of compute/storage budget if too many persistent storage entries are read at once.
-   - **Mitigation:** Uses paginated endpoints (`list_services_page`).
+   - **Mitigation:** Uses paginated reads (`list_services(offset, limit)`). Global reputation ordering is preserved across pages by a compact, incrementally-maintained leaderboard index (`SortedServiceIds` / `SortedServiceIdsByCategory`) — a read loads one index plus at most `limit` service entries, so page 0 is always the top-reputation page without ever sorting the whole registry in a single call.
 
 2. **LodestarAgents (Soroban Contract)**
    - **Failure:** Agent fails to pay or service rejects payment.

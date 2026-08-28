@@ -44,7 +44,7 @@ AI agents can already pay for services via the x402 protocol on Stellar. But the
 
 ## The Solution
 
-Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. Service providers call `register_service` once. AI agents call `list_services`, pick the best result by reputation, hit the endpoint, and pay via x402 — all without a single hardcoded URL. The registry is permanent and permissionless: no owner, no gatekeeping, no downtime.
+Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. Service providers call `register_service` once. AI agents call `list_services`, pick the best result by reputation, hit the endpoint, and pay via x402 — all without a single hardcoded URL. `list_services` is **globally ordered by reputation**, so page 0 is always the top-reputation page no matter how many services the registry holds — an agent that reads page 0 and takes the first entry is picking the best service overall, not the best of the oldest registrations. The registry is permanent and permissionless: no owner, no gatekeeping, no downtime.
 
 ---
 
@@ -84,6 +84,16 @@ Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. 
 
 ## How It Works
 
+### Ordering contract
+
+`list_services(offset, limit, category)` returns **active services ordered globally by reputation** (descending, with ties broken by registration order — ascending id). The ordering is a property of the whole registry, not of a single page:
+
+- The contract maintains a reputation-ordered leaderboard index (`Vec<(id, reputation)>`) on-chain, updated incrementally on every write: `register_service` inserts, `update_reputation` repositions, and `deactivate_service` removes.
+- Pages are slices of that index — the page slice is **never re-sorted locally**, so page 0 always holds the top-reputation active services (and page 0 of a category query is that category's top-reputation page).
+- Keeping the order in a maintained index (rather than sorting each page, or sorting the whole registry per read) is what preserves Soroban compute limits: a read touches only one compact index plus the `limit` service entries it returns.
+
+Consequence for agents: read page 0 (or page 0 for your category), take the first entry, and you have the best-ranked service — regardless of how many pages the registry spans.
+
 ### Provider flow
 1. Deploy any HTTP service that returns `402 Payment Required` with x402 headers
 2. Ask the backend for `POST /api/registry/prepare-register`, which builds an unsigned Soroban transaction using your real Stellar address as `provider`. Field limits: `name` 3–64 characters, `description` 10–256 characters, `endpoint` at most 256 characters, `category` 1–32 characters.
@@ -92,7 +102,7 @@ Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. 
 5. Your service is now permanently discoverable by any agent querying the registry
 
 ### Agent flow
-1. Call `list_services(category)` — returns active services sorted by reputation
+1. Call `list_services(category)` — returns active services in **global reputation order** (reputation descending, ties by registration). Page 0 holds the top-reputation services; pages are slices of the same on-chain leaderboard, not per-page sorts
 2. Pick the top result (highest reputation, lowest price, or newest)
 3. Make an HTTP request to the endpoint — receive a `402 Payment Required` response. For the search endpoint, the `q` query parameter is trimmed and normalized before forwarding. Queries longer than 256 characters are rejected with HTTP 400 `INVALID_QUERY`.
 4. Build and sign an x402 payment transaction on Stellar using the agent's keypair
