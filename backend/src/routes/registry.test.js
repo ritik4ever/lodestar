@@ -346,6 +346,28 @@ describe('POST /api/registry/prepare-register', () => {
       },
     ],
     [
+      'endpoint (malformed URL)',
+      {
+        name: 'Weather Oracle',
+        description: 'Real-time weather data for autonomous agents.',
+        endpoint: 'https://',
+        priceUsdc: '0.001',
+        category: 'weather',
+        providerAddress: VALID_PROVIDER,
+      },
+    ],
+    [
+      'endpoint (not a URL)',
+      {
+        name: 'Weather Oracle',
+        description: 'Real-time weather data for autonomous agents.',
+        endpoint: 'not a url',
+        priceUsdc: '0.001',
+        category: 'weather',
+        providerAddress: VALID_PROVIDER,
+      },
+    ],
+    [
       'priceUsdc',
       {
         name: 'Weather Oracle',

@@ -31,21 +31,29 @@ const EMPTY: FormState = {
   category: 'search',
 };
 
+function isValidHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function validate(f: FormState): Record<string, string> {
   const errors: Record<string, string> = {};
-  
+
   const trimmedName = f.name.trim();
-  if (trimmedName.length < 3 || trimmedName.length > 50)
-    errors.name = 'Name must be 3–50 characters';
-  
+  if (trimmedName.length < 3 || trimmedName.length > 64)
+    errors.name = 'Name must be 3–64 characters';
+
   const trimmedDescription = f.description.trim();
-  if (trimmedDescription.length < 10 || trimmedDescription.length > 200)
-    errors.description = 'Description must be 10–200 characters';
-  
+  if (trimmedDescription.length < 10 || trimmedDescription.length > 256)
+    errors.description = 'Description must be 10–256 characters';
+
   const trimmedEndpoint = f.endpoint.trim();
-  if (!trimmedEndpoint.startsWith('https://'))
-    errors.endpoint = 'Endpoint must start with https://';
-  
+  if (trimmedEndpoint.length === 0 || !isValidHttpsUrl(trimmedEndpoint))
+    errors.endpoint = 'Endpoint must be a valid https:// URL';
+
   const trimmedPrice = f.price_usdc.trim();
   if (trimmedPrice.length === 0 || trimmedPrice !== f.price_usdc || !PRICE_USDC_REGEX.test(trimmedPrice)) {
     errors.price_usdc = 'Invalid price format';
@@ -60,7 +68,7 @@ function validate(f: FormState): Record<string, string> {
 
 export default function RegisterForm({ walletAddress }: Props) {
   const [form, setForm]     = useState<FormState>(EMPTY);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>(() => validate(EMPTY));
   const [submitting, setSubmitting] = useState(false);
   const [pendingTx, setPendingTx] = useState<{ txHash: string } | null>(null);
   const [result, setResult] = useState<{ txHash: string; id: number } | null>(null);
@@ -150,53 +158,66 @@ export default function RegisterForm({ walletAddress }: Props) {
   return (
     <form onSubmit={handleSubmit} className="card p-8 space-y-5 fade-in">
       <Field
+        id="service-name"
         label="Service Name"
         error={errors.name}
-        hint="3–50 characters"
+        hint="3–64 characters"
       >
         <input
+          id="service-name"
           type="text"
           value={form.name}
           onChange={(e) => set('name', e.target.value)}
           placeholder="My Weather API"
           disabled={submitting}
+          aria-invalid={!!errors.name}
+          aria-describedby={errors.name ? 'service-name-error' : 'service-name-hint'}
           className={input(!!errors.name)}
         />
       </Field>
 
       <Field
+        id="service-description"
         label="Description"
         error={errors.description}
-        hint="10–200 characters"
+        hint="10–256 characters"
       >
         <textarea
+          id="service-description"
           rows={3}
           value={form.description}
           onChange={(e) => set('description', e.target.value)}
           placeholder="Describe what your service does and what data it returns..."
           disabled={submitting}
+          aria-invalid={!!errors.description}
+          aria-describedby={errors.description ? 'service-description-error' : 'service-description-hint'}
           className={input(!!errors.description)}
         />
       </Field>
 
       <Field
+        id="service-endpoint"
         label="Endpoint URL"
         error={errors.endpoint}
-        hint="Must start with https://"
+        hint="Must be a valid https:// URL"
       >
         <input
+          id="service-endpoint"
           type="url"
           value={form.endpoint}
           onChange={(e) => set('endpoint', e.target.value)}
           placeholder="https://api.example.com/weather"
           disabled={submitting}
+          aria-invalid={!!errors.endpoint}
+          aria-describedby={errors.endpoint ? 'service-endpoint-error' : 'service-endpoint-hint'}
           className={`mono ${input(!!errors.endpoint)}`}
         />
       </Field>
 
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Price (USDC)" error={errors.price_usdc} hint="Min 0.0001">
+        <Field id="service-price" label="Price (USDC)" error={errors.price_usdc} hint="Min 0.0001">
           <input
+            id="service-price"
             type="number"
             step="0.0001"
             min="0.0001"
@@ -204,12 +225,15 @@ export default function RegisterForm({ walletAddress }: Props) {
             onChange={(e) => set('price_usdc', e.target.value)}
             placeholder="0.001"
             disabled={submitting}
+            aria-invalid={!!errors.price_usdc}
+            aria-describedby={errors.price_usdc ? 'service-price-error' : 'service-price-hint'}
             className={`mono ${input(!!errors.price_usdc)}`}
           />
         </Field>
 
-        <Field label="Category" error={errors.category}>
+        <Field id="service-category" label="Category" error={errors.category}>
           <select
+            id="service-category"
             value={form.category}
             onChange={(e) => set('category', e.target.value as Category)}
             disabled={submitting}
@@ -248,11 +272,13 @@ function input(hasError: boolean) {
 }
 
 function Field({
+  id,
   label,
   error,
   hint,
   children,
 }: {
+  id: string;
   label: string;
   error?: string;
   hint?: string;
@@ -261,9 +287,13 @@ function Field({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <label className="text-sm font-medium">{label}</label>
-        {hint && !error && <span className="text-xs text-secondary">{hint}</span>}
-        {error && <span className="text-xs text-error">{error}</span>}
+        <label htmlFor={id} className="text-sm font-medium">{label}</label>
+        {hint && !error && (
+          <span id={`${id}-hint`} className="text-xs text-secondary">{hint}</span>
+        )}
+        {error && (
+          <span id={`${id}-error`} role="alert" className="text-xs text-error">{error}</span>
+        )}
       </div>
       {children}
     </div>
