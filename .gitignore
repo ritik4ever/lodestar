@@ -16,6 +16,8 @@ out/
 # Logs
 *.log
 logs/
+# On-chain write audit trail (see docs/audit-log.md)
+audit-onchain.jsonl
 
 # OS
 .DS_Store
