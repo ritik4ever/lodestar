@@ -323,7 +323,7 @@ Lodestar addresses all three brief requirements:
 
 **Bazaar-enabled facilitator** — The backend wraps the x402 facilitator and exposes a `/api/demo-run` endpoint that drives a full payment cycle: 402 → sign → retry → data. The demo page visualizes this step by step in real time.
 
-**Mainnet-ready infrastructure** — The Soroban contract uses persistent storage with maximum TTL to prevent archival. The backend is production-grade (pino logging, env validation, proper error codes). The frontend is Next.js 14 with TypeScript strict mode. Switching to mainnet requires changing one env var: `STELLAR_NETWORK=mainnet`.
+**Mainnet-ready infrastructure** — The Soroban contract uses persistent storage with a low-watermark TTL threshold (`extend_ttl(&key, LOW_WATERMARK, MAX_TTL)`) to prevent archival while only charging rent when TTL has genuinely decayed — halving the worst-case cost on the hot `update_reputation` path. The backend is production-grade (pino logging, env validation, proper error codes). The frontend is Next.js 14 with TypeScript strict mode. Switching to mainnet requires changing one env var: `STELLAR_NETWORK=mainnet`.
 
 ---
 

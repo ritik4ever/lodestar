@@ -14,14 +14,17 @@ temporary storage today; adding either should be recorded here.
 
 | Key | Value | Cardinality | Growth | TTL |
 | --- | --- | --- | --- | --- |
-| `Counter` | `u64` | 1 | fixed | extended to `MAX_TTL` on each service registration |
-| `ServiceIds` | `Vec<u64>` | 1 | **grows with every service ever registered** | extended on registration |
-| `Service(u64)` | `ServiceEntry` | one per service | linear in services | extended on registration and on every reputation change |
-| `ServiceIdsByCategory(String)` | `Vec<u64>` | one per category in use | linear in categories; each entry grows with services in that category | extended on registration |
-| `AgentsContract` | `Address` | 1 | fixed | extended at construction |
-| `LastVote(u64, Address)` | `u64` (ledger sequence) | **one per (service, voting agent) pair** | quadratic in the worst case: services × agents | extended on each vote |
+| `Counter` | `u64` | 1 | fixed | threshold-bumped to `MAX_TTL` when below `LOW_WATERMARK` on each service registration |
+| `ServiceIds` | `Vec<u64>` | 1 | **grows with every service ever registered** | threshold-bumped to `MAX_TTL` on registration |
+| `Service(u64)` | `ServiceEntry` | one per service | linear in services | threshold-bumped to `MAX_TTL` on registration and on every reputation change |
+| `ServiceIdsByCategory(String)` | `Vec<u64>` | one per category in use | linear in categories; each entry grows with services in that category | threshold-bumped to `MAX_TTL` on registration |
+| `AgentsContract` | `Address` | 1 | fixed | threshold-bumped to `MAX_TTL` at construction |
+| `LastVote(u64, Address)` | `u64` (ledger sequence) | **one per (service, voting agent) pair** | quadratic in the worst case: services × agents | threshold-bumped to `MAX_TTL` on each vote |
 
-`MAX_TTL = 3_110_400` ledgers (~180 days at 5s ledgers).
+`MAX_TTL = 3_110_400` ledgers (~180 days at 5 s/ledger).
+`LOW_WATERMARK = 1_555_200` ledgers (~90 days) — the threshold below which a TTL
+bump is triggered. If remaining TTL exceeds `LOW_WATERMARK`, `extend_ttl` is a
+no-op and the caller pays nothing for the bump.
 
 ### Notes
 
@@ -43,15 +46,17 @@ temporary storage today; adding either should be recorded here.
 
 | Key | Value | Cardinality | Growth | TTL |
 | --- | --- | --- | --- | --- |
-| `AgentCount` | `u64` | 1 | fixed | extended on registration |
-| `AgentIds` | `Vec<Address>` | 1 | **grows with every agent ever registered** | extended on registration |
-| `Agent(Address)` | `AgentEntry` | one per agent | linear in agents | extended on registration and on every score update |
-| `Policy(Address)` | spending policy | one per agent with a policy | linear in agents | extended on policy write |
-| `RegistryContract` | `Address` | 1 | fixed | extended at construction |
-| `Admin` | `Address` | 1 | fixed | extended at construction |
+| `AgentCount` | `u64` | 1 | fixed | threshold-bumped to `MAX_TTL` on registration |
+| `AgentIds` | `Vec<Address>` | 1 | **grows with every agent ever registered** | threshold-bumped to `MAX_TTL` on registration |
+| `Agent(Address)` | `AgentEntry` | one per agent | linear in agents | threshold-bumped to `MAX_TTL` on registration and on every score update |
+| `Policy(Address)` | spending policy | one per agent with a policy | linear in agents | threshold-bumped to `MAX_TTL` on policy write |
+| `RegistryContract` | `Address` | 1 | fixed | threshold-bumped to `MAX_TTL` at construction |
+| `Admin` | `Address` | 1 | fixed | threshold-bumped to `MAX_TTL` at construction |
 
 `MAX_TTL = 100_000_000` ledgers — deliberately large for test and CI stability;
 worth revisiting before a mainnet deploy, since TTL is rent.
+`LOW_WATERMARK = 50_000_000` ledgers (½ × `MAX_TTL`) — bump only fires when
+remaining TTL has decayed below this value.
 
 ### Notes
 
@@ -64,11 +69,17 @@ worth revisiting before a mainnet deploy, since TTL is rent.
 
 ## TTL classes
 
-Both contracts extend to their `MAX_TTL` on every write, so any key that is
-written regularly effectively never expires. Keys written **once** —
-`AgentsContract`, `RegistryContract`, `Admin` — are the ones at risk of
-archival on a quiet network, and are also the ones whose loss would break the
-cross-contract call entirely.
+Both contracts use a threshold-based TTL bump: `extend_ttl(&key, LOW_WATERMARK, MAX_TTL)`.
+The host skips the bump (and charges nothing) when the entry's remaining TTL is
+already above `LOW_WATERMARK`.  This makes the bump a no-op on every call except
+those that arrive more than half the max window after the previous write — which
+cuts the worst-case rent cost on the hot `update_reputation` and `record_payment`
+paths roughly in half.
+
+Keys written **once** — `AgentsContract`, `RegistryContract`, `Admin` — are the
+ones at highest archival risk on a quiet network, and their loss would break all
+cross-contract calls.  The threshold form is safe for them too: they will be
+refreshed on the first interaction after their TTL drops below `LOW_WATERMARK`.
 
 ## What a migration must preserve
 
