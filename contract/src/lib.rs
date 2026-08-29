@@ -1,7 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, vec, Address, Env, IntoVal, String, Symbol, Vec,
+    contract, contractimpl, contracttype, vec, Address, Env, EnvBase, IntoVal, String, Symbol,
+    Val, Vec,
 };
 
 const MAX_TTL: u32 = 3110400;
@@ -43,6 +44,24 @@ pub enum DataKey {
     // `(service_id, agent) -> last_vote_ledger` cooldown map as discrete keys so
     // each lookup touches only one entry instead of loading a growing Map.
     LastVote(u64, Address),
+}
+
+/// Require `endpoint` to use HTTPS so x402 payment headers are not sent in
+/// plaintext. Local development should use an HTTPS tunnel (ngrok, Cloudflare
+/// Tunnel, etc.) or test against deployed demo endpoints — see
+/// `docs/provider-registration.md`.
+fn validate_endpoint(env: &Env, endpoint: &String) {
+    const PREFIX: &[u8] = b"https://";
+    let prefix_len = PREFIX.len() as u32;
+    assert!(
+        endpoint.len() >= prefix_len,
+        "endpoint must start with https://"
+    );
+
+    let mut head = [0u8; PREFIX.len()];
+    env.string_copy_to_slice(endpoint.to_object(), Val::U32_ZERO, &mut head)
+        .expect("endpoint prefix copy failed");
+    assert!(head == *PREFIX, "endpoint must start with https://");
 }
 
 fn active_service_exists(env: &Env, provider: &Address, endpoint: &String) -> bool {
@@ -122,6 +141,7 @@ impl LodestarRegistry {
             endpoint.len() <= 256,
             "endpoint must be at most 256 characters"
         );
+        validate_endpoint(&env, &endpoint);
         assert!(
             category.len() >= 1,
             "category must be 1-32 characters"
@@ -1182,6 +1202,46 @@ mod test {
                 &String::from_str(&env, "compute"),
             )
             .is_ok());
+    }
+
+    #[test]
+    fn test_register_service_rejects_http_endpoint() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, "http://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_register_service_rejects_non_url_endpoint() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, "not-a-url"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_err());
     }
 
     #[test]
