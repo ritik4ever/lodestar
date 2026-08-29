@@ -89,6 +89,7 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
         <button
           onClick={copyEndpoint}
           className="text-xs text-secondary hover:text-primary transition-colors shrink-0"
+          aria-label={copied ? 'Endpoint copied' : 'Copy endpoint'}
         >
           {copied ? 'Copied' : 'Copy'}
         </button>
@@ -103,6 +104,7 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => vote(false)}
+            aria-label="Decrease service reputation"
             disabled={voting}
             className="text-secondary hover:text-error transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
@@ -114,6 +116,7 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
           <button
             onClick={() => vote(true)}
             disabled={voting}
+            aria-label="Increase service reputation"
             className="text-secondary hover:text-success transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             +
@@ -122,7 +125,11 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
       </div>
 
       {pendingTx && (
-        <div className="flex items-center gap-2 text-xs text-secondary bg-background rounded-lg px-3 py-2 border border-border">
+        <div
+          className="flex items-center gap-2 text-xs text-secondary bg-background rounded-lg px-3 py-2 border border-border"
+          role="status"
+          aria-live="polite"
+        >
           <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full spinner" />
           <span className="truncate flex-1">Confirming vote...</span>
           <a
@@ -137,7 +144,10 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
       )}
 
       {voteError && (
-        <p className="text-error text-xs bg-error/5 border border-error/20 rounded-lg px-3 py-2">
+        <p
+          className="text-error text-xs bg-error/5 border border-error/20 rounded-lg px-3 py-2"
+          role="alert"
+        >
           {voteError}
         </p>
       )}
@@ -158,6 +168,7 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
       <button
         onClick={copyEndpoint}
         disabled={voting}
+        aria-label={copied ? 'Endpoint copied' : 'Copy endpoint'}
         className="btn-secondary w-full text-center text-sm disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Use Endpoint

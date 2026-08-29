@@ -49,7 +49,12 @@ export default function ServiceDetailPage() {
 
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto px-6 py-12">
+      <div
+        className="max-w-4xl mx-auto px-6 py-12"
+        aria-busy="true"
+        aria-label="Loading service"
+        role="status"
+      >
         <div className="card p-8 h-64 animate-pulse bg-border/40 mb-6" />
       </div>
     );
@@ -58,7 +63,9 @@ export default function ServiceDetailPage() {
   if (error || !service) {
     return (
       <div className="max-w-4xl mx-auto px-6 py-24 text-center">
-        <p className="text-error text-sm mb-4">{error ?? 'Service not found'}</p>
+        <p className="text-error text-sm mb-4" role="alert">
+          {error ?? 'Service not found'}
+        </p>
         <div className="flex justify-center gap-3 flex-wrap">
           <Link href="/registry" className="btn-secondary px-5 py-2.5 text-sm">
             Back to registry
