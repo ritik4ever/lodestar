@@ -74,7 +74,7 @@ fn registry_accepts_a_vote_from_an_agent_registered_in_the_real_contract() {
 
     registry.update_reputation(&service_id, &true, &agent);
 
-    let service = registry.get_service(&service_id);
+    let service = registry.get_service(&service_id).unwrap();
     assert!(
         service.reputation > 0,
         "a positive vote from a registered agent should raise reputation",
@@ -120,7 +120,7 @@ fn a_callee_panic_propagates_and_leaves_registry_state_untouched() {
     );
     assert!(result.is_ok(), "sanity: registry itself still works");
 
-    let before = registry.get_service(&service_id);
+    let before = registry.get_service(&service_id).unwrap();
 
     // The registry surfaces the failure rather than silently counting the vote:
     // a duplicate registration in the agents contract panics, and the whole
@@ -135,7 +135,7 @@ fn a_callee_panic_propagates_and_leaves_registry_state_untouched() {
     }));
     assert!(duplicate.is_err(), "duplicate registration must panic");
 
-    let after = registry.get_service(&service_id);
+    let after = registry.get_service(&service_id).unwrap();
     assert_eq!(
         before.reputation, after.reputation,
         "a panic in the agents contract must not alter registry state",
@@ -168,7 +168,7 @@ fn vote_cooldown_still_applies_across_the_real_cross_contract_call() {
     registry.update_reputation(&service_id, &false, &agent);
 
     // One positive then one negative vote nets back to the starting score.
-    let service = registry.get_service(&service_id);
+    let service = registry.get_service(&service_id).unwrap();
     assert_eq!(service.reputation, 0);
 }
 

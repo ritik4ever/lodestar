@@ -201,11 +201,8 @@ impl LodestarRegistry {
         new_id
     }
 
-    pub fn get_service(env: Env, id: u64) -> ServiceEntry {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Service(id))
-            .expect("Service not found")
+    pub fn get_service(env: Env, id: u64) -> Option<ServiceEntry> {
+        env.storage().persistent().get(&DataKey::Service(id))
     }
 
     pub fn list_services(
@@ -895,12 +892,12 @@ mod test {
         assert!(registry
             .try_update_reputation(&id, &true, &stranger)
             .is_err());
-        assert_eq!(registry.get_service(&id).reputation, 0);
+        assert_eq!(registry.get_service(&id).unwrap().reputation, 0);
 
         // Once registered, the same address may vote.
         agents.set_registered(&stranger, &true);
         registry.update_reputation(&id, &true, &stranger);
-        assert_eq!(registry.get_service(&id).reputation, 1);
+        assert_eq!(registry.get_service(&id).unwrap().reputation, 1);
     }
 
     #[test]
@@ -914,13 +911,13 @@ mod test {
         agents.set_registered(&agent, &true);
 
         registry.update_reputation(&id, &true, &agent);
-        assert_eq!(registry.get_service(&id).reputation, 1);
+        assert_eq!(registry.get_service(&id).unwrap().reputation, 1);
 
         // Advance past the cooldown, then a negative vote brings it back to 0.
         env.ledger()
             .with_mut(|li| li.sequence_number += VOTE_COOLDOWN_LEDGERS as u32 + 1);
         registry.update_reputation(&id, &false, &agent);
-        assert_eq!(registry.get_service(&id).reputation, 0);
+        assert_eq!(registry.get_service(&id).unwrap().reputation, 0);
     }
 
     #[test]
@@ -935,17 +932,17 @@ mod test {
 
         // First vote succeeds.
         registry.update_reputation(&id, &true, &agent);
-        assert_eq!(registry.get_service(&id).reputation, 1);
+        assert_eq!(registry.get_service(&id).unwrap().reputation, 1);
 
         // A second vote within the cooldown window is rejected — no inflation.
         assert!(registry.try_update_reputation(&id, &true, &agent).is_err());
-        assert_eq!(registry.get_service(&id).reputation, 1);
+        assert_eq!(registry.get_service(&id).unwrap().reputation, 1);
 
         // After the cooldown elapses, voting is allowed again.
         env.ledger()
             .with_mut(|li| li.sequence_number += VOTE_COOLDOWN_LEDGERS as u32 + 1);
         registry.update_reputation(&id, &true, &agent);
-        assert_eq!(registry.get_service(&id).reputation, 2);
+        assert_eq!(registry.get_service(&id).unwrap().reputation, 2);
     }
 
     #[test]
@@ -968,8 +965,8 @@ mod test {
         // Agent A voting on a different service is also unaffected.
         registry.update_reputation(&id2, &true, &agent_a);
 
-        assert_eq!(registry.get_service(&id1).reputation, 2);
-        assert_eq!(registry.get_service(&id2).reputation, 1);
+        assert_eq!(registry.get_service(&id1).unwrap().reputation, 2);
+        assert_eq!(registry.get_service(&id2).unwrap().reputation, 1);
     }
 
     #[test]
@@ -1001,7 +998,7 @@ mod test {
         // …then drop all auth mocks so require_auth is genuinely enforced.
         env.set_auths(&[]);
         assert!(registry.try_update_reputation(&id, &true, &agent).is_err());
-        assert_eq!(registry.get_service(&id).reputation, 0);
+        assert_eq!(registry.get_service(&id).unwrap().reputation, 0);
     }
 
     #[test]
@@ -1022,12 +1019,12 @@ mod test {
         agents.set_registered(&agent, &true);
 
         registry.update_reputation(&1u64, &true, &agent);
-        assert_eq!(registry.get_service(&1u64).reputation, MAX_REPUTATION);
+        assert_eq!(registry.get_service(&1u64).unwrap().reputation, MAX_REPUTATION);
 
         env.ledger()
             .with_mut(|li| li.sequence_number += VOTE_COOLDOWN_LEDGERS as u32 + 1);
         registry.update_reputation(&1u64, &true, &agent);
-        assert_eq!(registry.get_service(&1u64).reputation, MAX_REPUTATION);
+        assert_eq!(registry.get_service(&1u64).unwrap().reputation, MAX_REPUTATION);
     }
 
     #[test]
@@ -1048,12 +1045,12 @@ mod test {
         agents.set_registered(&agent, &true);
 
         registry.update_reputation(&1u64, &false, &agent);
-        assert_eq!(registry.get_service(&1u64).reputation, MIN_REPUTATION);
+        assert_eq!(registry.get_service(&1u64).unwrap().reputation, MIN_REPUTATION);
 
         env.ledger()
             .with_mut(|li| li.sequence_number += VOTE_COOLDOWN_LEDGERS as u32 + 1);
         registry.update_reputation(&1u64, &false, &agent);
-        assert_eq!(registry.get_service(&1u64).reputation, MIN_REPUTATION);
+        assert_eq!(registry.get_service(&1u64).unwrap().reputation, MIN_REPUTATION);
     }
 
     // ── register_service input validation tests ───────────────────────────
@@ -1288,6 +1285,15 @@ mod test {
                 &String::from_str(&env, &max_category),
             )
             .is_ok());
+    }
+
+    #[test]
+    fn test_get_service_returns_none_for_unknown_id() {
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+        let registry = LodestarRegistryClient::new(&env, &contract_id);
+
+        assert!(registry.get_service(&999u64).is_none());
     }
 
     #[test]
