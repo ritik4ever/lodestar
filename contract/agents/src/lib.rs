@@ -6,7 +6,7 @@ use soroban_sdk::{
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const MAX_TTL: u32 = 100_000_000; // extended for tests/CI stability
+const MAX_TTL: u32 = 3_110_400; // protocol maximum (matches registry)
 #[cfg(not(test))]
 const DAY_LEDGERS: u64 = 17_280; // 86400 / 5
 #[cfg(test)]
