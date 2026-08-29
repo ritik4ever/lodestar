@@ -429,6 +429,11 @@ impl LodestarRegistry {
 
 #[cfg(test)]
 mod test {
+    // This crate is no_std; `format!` lives in `alloc` and must be imported
+    // explicitly for the tests that build strings.
+    extern crate alloc;
+    use alloc::format;
+
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},

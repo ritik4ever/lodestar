@@ -48,3 +48,12 @@ export function writeRateLimiter(
     },
   });
 }
+
+/**
+ * The shared Redis client, or undefined when REDIS_URL is unset.
+ * Exposed so the readiness probe can ping the same connection the rate limiter
+ * actually uses, rather than opening a second one (#841).
+ */
+export function getRateLimiterRedis() {
+  return client;
+}
