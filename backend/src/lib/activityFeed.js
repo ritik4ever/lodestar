@@ -1,60 +1,133 @@
-// Activity feed — persisted to a JSON file so entries survive server restarts.
-// Kept dependency-free so the feed/pagination logic is unit-testable in
-// isolation from Express, x402, and runtime config.
+// Activity feed — durable store backed by Redis (capped list).
+//
+// ── Retention ───────────────────────────────────────────────────────────────
+// At most ACTIVITY_MAX_ENTRIES (50) entries are kept.  Every write appends to
+// the head of a Redis list and trims the tail to the cap, so storage is O(1)
+// and retention requires no scheduled job.
+//
+// Redis key:  lodestar:activity:feed
+// Structure:  a Redis list of JSON-serialised entry objects, newest-first.
+//
+// ── Replica consistency ──────────────────────────────────────────────────────
+// All replicas share the same Redis list, so every GET /activity response
+// reflects the same set of events regardless of which backend instance handled
+// the write.
+//
+// ── Restart durability ──────────────────────────────────────────────────────
+// The list lives in Redis, not in process memory or a local file.  Restarting
+// or replacing a backend instance does not lose entries.
+//
+// ── Fallback ────────────────────────────────────────────────────────────────
+// When REDIS_URL is not set the module falls back to the file-based store so
+// a single-instance deployment without Redis continues to work unchanged.  The
+// fallback is logged once at startup so operators know which path is active.
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = process.env.ACTIVITY_FEED_DIR || join(__dirname, '../../data');
-const FEED_FILE = join(DATA_DIR, 'activityFeed.json');
 
-// Capacity of the feed and pagination bounds.
+// ── Constants ────────────────────────────────────────────────────────────────
+
+/** Maximum number of entries retained in the feed. */
 export const ACTIVITY_MAX_ENTRIES = 50;
 export const ACTIVITY_DEFAULT_LIMIT = 20;
 export const ACTIVITY_MAX_LIMIT = ACTIVITY_MAX_ENTRIES;
 
-function ensureDataDir() {
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true });
-  }
+const REDIS_KEY = 'lodestar:activity:feed';
+
+// ── Redis client (optional) ──────────────────────────────────────────────────
+
+let redisClient = null;
+
+/**
+ * Inject a Redis client.  Called by the server at startup (or in tests via
+ * the ioredis-mock).  When not called, the module falls back to the file store.
+ *
+ * @param {import('ioredis').Redis} client
+ */
+export function setActivityFeedRedis(client) {
+  redisClient = client;
 }
 
-function loadFeed() {
+// ── File-based fallback ──────────────────────────────────────────────────────
+
+const DATA_DIR = process.env.ACTIVITY_FEED_DIR || join(__dirname, '../../data');
+const FEED_FILE = join(DATA_DIR, 'activityFeed.json');
+
+function ensureDataDir() {
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function fileFeedLoad() {
   ensureDataDir();
   if (!existsSync(FEED_FILE)) return [];
   const raw = readFileSync(FEED_FILE, 'utf-8');
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) {
-    throw new Error(`[activityFeed] Feed file contains invalid format: expected array, got ${typeof parsed}`);
+    throw new Error(
+      `[activityFeed] Feed file contains invalid format: expected array, got ${typeof parsed}`,
+    );
   }
   return parsed;
 }
 
-function saveFeed(feed) {
+function fileFeedSave(feed) {
   ensureDataDir();
-  writeFileSync(FEED_FILE, JSON.stringify(feed, null, 2), 'utf-8'); // let errors bubble up
+  writeFileSync(FEED_FILE, JSON.stringify(feed, null, 2), 'utf-8');
 }
 
-export function recordActivity(entry) {
-  const feed = loadFeed();
+// ── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Append one entry to the front of the activity feed.
+ *
+ * With Redis: atomic LPUSH + LTRIM keeps the list capped without a scan.
+ * Without Redis: load → unshift → trim → write (file-based fallback).
+ *
+ * @param {object} entry
+ */
+export async function recordActivity(entry) {
+  if (redisClient) {
+    const serialised = JSON.stringify(entry);
+    // LPUSH pushes to the head (newest-first); LTRIM discards the tail.
+    await redisClient.lpush(REDIS_KEY, serialised);
+    await redisClient.ltrim(REDIS_KEY, 0, ACTIVITY_MAX_ENTRIES - 1);
+    return;
+  }
+
+  // File-based fallback
+  const feed = fileFeedLoad();
   feed.unshift(entry);
   if (feed.length > ACTIVITY_MAX_ENTRIES) feed.pop();
   try {
-    saveFeed(feed);
+    fileFeedSave(feed);
   } catch (err) {
     console.error('[activityFeed] Failed to persist feed:', err.message);
-    throw err; // propagate so callers know persistence failed
+    throw err;
   }
 }
 
-export function getActivityFeed() {
+/**
+ * Return the full activity feed as an array of plain objects, newest-first.
+ *
+ * With Redis: LRANGE 0 -1 (returns all elements, newest-first).
+ * Without Redis: reads the JSON file.
+ *
+ * @returns {Promise<object[]>}
+ */
+export async function getActivityFeed() {
+  if (redisClient) {
+    const raw = await redisClient.lrange(REDIS_KEY, 0, -1);
+    return raw.map((s) => JSON.parse(s));
+  }
+
   try {
-    return loadFeed();
+    return fileFeedLoad();
   } catch (err) {
     console.error('[activityFeed] Failed to load feed:', err.message);
-    throw err; // propagate so callers can handle appropriately
+    throw err;
   }
 }
 
@@ -88,4 +161,4 @@ export function parseActivityPagination(query = {}) {
   }
 
   return { limit, offset, errors };
-}
+}

@@ -20,6 +20,8 @@ import registryRouter from "./routes/registry.js";
 import servicesRouter from "./routes/services.js";
 import demoRouter from "./routes/demo.js";
 import agentsRouter from "./routes/agents.js";
+import { setActivityFeedRedis } from "./lib/activityFeed.js";
+import { getRateLimiterRedis } from "./middleware/rateLimiter.js";
 
 if (process.argv.includes("--print-config")) {
   console.log(
@@ -50,6 +52,22 @@ if (process.argv.includes("--print-config")) {
 }
 
 validateConfig(logger);
+
+// Wire the shared Redis client (from the rate limiter) into the activity feed
+// so entries survive restarts and are consistent across replicas.
+// When REDIS_URL is not set, getRateLimiterRedis() returns undefined and
+// activityFeed falls back to the JSON-file store automatically.
+const feedRedis = getRateLimiterRedis();
+if (feedRedis) {
+  setActivityFeedRedis(feedRedis);
+  logger.info('Activity feed backed by Redis (durable, replica-consistent)');
+} else {
+  logger.warn(
+    'REDIS_URL not set — activity feed using local file store. ' +
+    'Feed will not survive restarts or be consistent across replicas. ' +
+    'Set REDIS_URL to enable the durable Redis-backed store.',
+  );
+}
 
 logger.info({ corsOrigin: config.corsOrigin }, "Resolved CORS origin allowlist");
 

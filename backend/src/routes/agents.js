@@ -418,7 +418,7 @@ router.get('/agents/:address/payment-history', requireAgentsContract, async (req
       return res.status(400).json({ error: errors.join('; '), code: 'INVALID_PAGINATION' });
     }
 
-    const feed = getActivityFeed();
+    const feed = await getActivityFeed();
     const payments = feed.filter(
       (entry) => entry.agent === address && typeof entry.txHash === 'string' && entry.txHash.length > 0
     );

@@ -12,8 +12,8 @@ vi.mock('../lib/contract.js', () => ({
 }));
 
 vi.mock('../lib/activityFeed.js', () => ({
-  recordActivity: (...args) => mockRecordActivity(...args),
-  getActivityFeed: vi.fn(() => []),
+  recordActivity: (...args) => Promise.resolve(mockRecordActivity(...args)),
+  getActivityFeed: vi.fn(() => Promise.resolve([])),
   parseActivityPagination: vi.fn(() => ({ limit: 20, offset: 0, errors: [] })),
   ACTIVITY_MAX_ENTRIES: 500,
   ACTIVITY_DEFAULT_LIMIT: 20,

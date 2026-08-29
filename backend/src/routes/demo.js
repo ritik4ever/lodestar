@@ -88,7 +88,7 @@ router.post('/demo-run', async (req, res) => {
     const finalEndpointUrl = endpoint.toString();
 
     const httpClient = buildHttpClient();
-    const activityCountBefore = getActivityFeed().length;
+    const activityCountBefore = (await getActivityFeed()).length;
 
     const { response, txHash: fetchedTxHash } = await httpClient.fetchWithTx(finalEndpointUrl, { signal: abortController.signal });
 
@@ -145,7 +145,7 @@ router.post('/demo-run', async (req, res) => {
       logger.warn({ serviceId, category, maxWaitMs: config.demoRun.pollMaxWaitMs }, 'Activity txHash not found before poll timeout');
     }
 
-    recordActivity({
+    await recordActivity({
       timestamp: new Date().toISOString(),
       agent: config.server.address,
       service: service.name,

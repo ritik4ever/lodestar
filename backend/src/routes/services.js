@@ -131,7 +131,7 @@ router.get('/weather', async (req, res) => {
     const agentAddress = req.headers['x-payment-address'] ?? '';
     const txHash = req.headers['x-payment-transaction'] ?? '';
 
-    recordActivity({
+    await recordActivity({
       timestamp: new Date().toISOString(),
       agent: agentAddress || 'unknown',
       service: 'Lodestar Weather Service',
@@ -200,7 +200,7 @@ router.get('/search', async (req, res) => {
     const searchAgentAddress = req.headers['x-payment-address'] ?? '';
     const searchTxHash = req.headers['x-payment-transaction'] ?? '';
 
-    recordActivity({
+    await recordActivity({
       timestamp: new Date().toISOString(),
       agent: searchAgentAddress || 'unknown',
       service: 'Lodestar Search Service',
@@ -225,14 +225,14 @@ router.get('/search', async (req, res) => {
   }
 });
 
-router.get('/activity', (req, res) => {
+router.get('/activity', async (req, res) => {
   const { limit, offset, errors } = parseActivityPagination(req.query);
   if (errors.length > 0) {
     logger.warn({ query: req.query, errors }, 'Invalid activity pagination params');
     return res.status(400).json({ error: errors.join('; '), code: 'INVALID_PAGINATION' });
   }
 
-  const feed = getActivityFeed();
+  const feed = await getActivityFeed();
   const total = feed.length;
   const items = feed.slice(offset, offset + limit);
   const hasMore = offset + items.length < total;
