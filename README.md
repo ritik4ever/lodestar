@@ -164,6 +164,13 @@ cp .env.example .env
 npm install
 ```
 
+Transaction submissions use exponential confirmation polling. The backend polls
+immediately, then waits 1.5 seconds and doubles the delay after each `NOT_FOUND`
+response until the configured deadline. Set `CONTRACT_TX_POLL_MAX_WAIT_MS` in
+`backend/.env` to change the total confirmation window; the default is 30 seconds.
+If the deadline is reached, the API returns `TRANSACTION_TIMEOUT` with HTTP 504
+and leaves the hash in the pending-transaction registry for later recovery.
+
 ### 4. Run seed script
 
 ```sh

@@ -61,6 +61,11 @@ const config = Object.freeze({
   contract: {
     id: process.env.CONTRACT_ID,
     agentsId: process.env.AGENTS_CONTRACT_ID ?? null,
+    txPollMaxWaitMs: parsePositiveInt(
+      process.env.CONTRACT_TX_POLL_MAX_WAIT_MS,
+      30_000,
+      'CONTRACT_TX_POLL_MAX_WAIT_MS',
+    ),
   },
 
   // Warn at startup if AGENTS_CONTRACT_ID is missing so operators spot it
@@ -138,7 +143,7 @@ const config = Object.freeze({
 
   // Graceful shutdown: how long (ms) to wait for the submit queue to drain
   // and pending transaction checks before force-exiting. Default is just over
-  // the max polling window (30 s) so an in-flight poll can finish.
+  // the default transaction polling window; increase it with that window.
   shutdownTimeoutMs: parsePositiveInt(process.env.SHUTDOWN_TIMEOUT_MS, 35_000, 'SHUTDOWN_TIMEOUT_MS'),
 
   // RPC retry with jittered exponential backoff for transient failures.

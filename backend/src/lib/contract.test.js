@@ -2,7 +2,7 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../config.js', () => ({
   default: {
-    contract: { id: 'mock', agentsId: 'mock' },
+    contract: { id: 'mock', agentsId: 'mock', txPollMaxWaitMs: 10_000 },
     server: { address: 'mock', secret: 'SDY7R6HC2UK4D4CWWBKZBJTE6FLY5QHGQCK2U6U3R3KASMW5OPWMBDO2' },
     stellar: { network: 'testnet', rpcUrl: 'https://mock', networkPassphrase: 'mock', usdcContractId: 'mock' },
     x402: { facilitatorUrl: 'https://mock', searchPrice: '0.001', weatherPrice: '0.001', payTo: 'G_MOCK_PAYMENT' },
@@ -21,6 +21,15 @@ const { mockGetAccount, mockSimulateTransaction, mockSendTransaction, mockGetTra
   mockSendTransaction: vi.fn(),
   mockGetTransaction: vi.fn(),
 }));
+
+const mockLogger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+}));
+
+vi.mock('./logger.js', () => ({ default: mockLogger }));
 
 vi.mock('./stellar.js', () => ({
   getStellarServer: () => ({
@@ -52,6 +61,14 @@ function resetMockServer() {
   mockSimulateTransaction.mockReset();
   mockSendTransaction.mockReset();
   mockGetTransaction.mockReset();
+}
+
+function mockTransactionPollServer() {
+  const pollServer = {
+    getTransaction: mockGetTransaction,
+    httpClient: { defaults: {} },
+  };
+  contractLib.__setTransactionPollServerForTest(() => pollServer);
 }
 
 describe('registerServiceOnChain duplicate checks', () => {
@@ -565,6 +582,7 @@ describe('simulateAndSubmit transaction polling', () => {
 
   beforeEach(() => {
     resetMockServer();
+    mockTransactionPollServer();
     contractLib.resetRpcMetrics();
     contract = new sdkPkg.Contract(VALID_CONTRACT_ID);
     mockGetAccount.mockResolvedValue({ sequence: '1' });
@@ -574,6 +592,7 @@ describe('simulateAndSubmit transaction polling', () => {
   });
 
   afterEach(() => {
+    contractLib.__setTransactionPollServerForTest();
     contractLib.__setAssembleTransactionForTest();
   });
 
@@ -602,6 +621,60 @@ describe('simulateAndSubmit transaction polling', () => {
       code: 'RETURN_VALUE_PARSE_FAILED',
       hash: 'txhash123',
     });
+  });
+
+  it('uses exponential backoff until the configured deadline and logs timeout context', async () => {
+    vi.useFakeTimers();
+    try {
+      const deadlineAt = Date.now() + 10_000;
+      mockGetTransaction.mockResolvedValue({ status: 'NOT_FOUND' });
+      const promise = contractLib.simulateAndSubmit(contract.call('get_service_count'));
+      const rejection = expect(promise).rejects.toMatchObject({
+        code: 'TRANSACTION_TIMEOUT',
+        hash: 'txhash123',
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockGetTransaction).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(mockGetTransaction).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(mockGetTransaction).toHaveBeenCalledTimes(3);
+
+      await vi.advanceTimersByTimeAsync(5_500);
+      await rejection;
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ hash: 'txhash123', maxWaitMs: 10_000, deadlineAt, pollCount: 3 }),
+        expect.stringContaining('remains pending'),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases the submit queue when transaction lookup never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      mockGetTransaction.mockReturnValue(new Promise(() => {}));
+      const promise = contractLib.simulateAndSubmit(contract.call('get_service_count'));
+      const rejection = expect(promise).rejects.toMatchObject({
+        code: 'TRANSACTION_TIMEOUT',
+        hash: 'txhash123',
+      });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejection;
+      expect(mockGetTransaction).toHaveBeenCalledTimes(1);
+      expect(contractLib.getSubmitQueueDepth()).toBe(0);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ hash: 'txhash123', pollCount: 1 }),
+        expect.stringContaining('remains pending'),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -677,6 +750,7 @@ describe('pendingTransactions registry', () => {
 
   beforeEach(() => {
     resetMockServer();
+    mockTransactionPollServer();
     contractLib.resetRpcMetrics();
     contractLib.__resetPendingTransactions();
     contract = new sdkPkg.Contract(VALID_CONTRACT_ID);
@@ -686,6 +760,7 @@ describe('pendingTransactions registry', () => {
   });
 
   afterEach(() => {
+    contractLib.__setTransactionPollServerForTest();
     contractLib.__setAssembleTransactionForTest();
     contractLib.__resetPendingTransactions();
   });
@@ -695,13 +770,19 @@ describe('pendingTransactions registry', () => {
     expect(contractLib.getPendingTransactions()).toEqual([]);
   });
 
-  it('retains pending transaction on NOT_FOUND timeout (tx may still confirm on-chain)', { timeout: 40000 }, async () => {
-    mockSendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'pending-hash-1' });
-    mockGetTransaction.mockResolvedValue({ status: 'NOT_FOUND' });
+  it('retains pending transaction on NOT_FOUND timeout (tx may still confirm on-chain)', async () => {
+    vi.useFakeTimers();
+    try {
+      mockSendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'pending-hash-1' });
+      mockGetTransaction.mockResolvedValue({ status: 'NOT_FOUND' });
 
-    await expect(
-      contractLib.simulateAndSubmit(contract.call('get_service_count'))
-    ).rejects.toThrow('Transaction not confirmed after polling');
+      const promise = contractLib.simulateAndSubmit(contract.call('get_service_count'));
+      const rejection = expect(promise).rejects.toThrow('Transaction not confirmed after polling');
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(contractLib.getPendingTransactionCount()).toBe(1);
     const pending = contractLib.getPendingTransactions();
@@ -882,12 +963,14 @@ describe('submitQueue management', () => {
   beforeEach(() => {
     contractLib.__resetPendingTransactions();
     resetMockServer();
+    mockTransactionPollServer();
     mockGetAccount.mockResolvedValue({ sequence: '1' });
     mockSimulateTransaction.mockResolvedValue({ result: { retval: sdkPkg.xdr.ScVal.scvVoid() } });
     contractLib.__setAssembleTransactionForTest((tx) => ({ build: () => tx }));
   });
 
   afterEach(() => {
+    contractLib.__setTransactionPollServerForTest();
     contractLib.__setAssembleTransactionForTest();
   });
 

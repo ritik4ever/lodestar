@@ -28,6 +28,7 @@ async function loadConfig(overrides = {}) {
     'DEMO_RUN_POLL_MAX_WAIT_MS',
     'DEMO_RUN_POLL_INITIAL_DELAY_MS',
     'DEMO_RUN_POLL_MAX_DELAY_MS',
+    'CONTRACT_TX_POLL_MAX_WAIT_MS',
   ]) {
     if (!(key in overrides)) delete process.env[key];
   }
@@ -115,6 +116,33 @@ describe('config demoRun polling env validation', () => {
   });
 });
 
+describe('config contract transaction polling env validation', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it('uses the current polling window as the default max wait', async () => {
+    const config = await loadConfig();
+    expect(config.contract.txPollMaxWaitMs).toBe(30_000);
+  });
+
+  it('honors a valid max wait override', async () => {
+    const config = await loadConfig({ CONTRACT_TX_POLL_MAX_WAIT_MS: '5000' });
+    expect(config.contract.txPollMaxWaitMs).toBe(5000);
+  });
+
+  it('falls back and warns on an invalid max wait', async () => {
+    const config = await loadConfig({ CONTRACT_TX_POLL_MAX_WAIT_MS: '0' });
+    expect(config.contract.txPollMaxWaitMs).toBe(30_000);
+    expect(console.warn).toHaveBeenCalled();
+  });
+});
+
 describe('config x402.payTo PAYMENT_ADDRESS validation', () => {
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
@@ -143,6 +171,7 @@ describe('config x402.payTo PAYMENT_ADDRESS validation', () => {
       'DEMO_RUN_POLL_MAX_WAIT_MS',
       'DEMO_RUN_POLL_INITIAL_DELAY_MS',
       'DEMO_RUN_POLL_MAX_DELAY_MS',
+      'CONTRACT_TX_POLL_MAX_WAIT_MS',
     ]) {
       delete process.env[key];
     }

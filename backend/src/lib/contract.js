@@ -47,7 +47,9 @@ export {
 
 
 const TIMEOUT = 30;
+const TRANSACTION_POLL_INITIAL_DELAY_MS = 1_500;
 const REGISTRY_SUBMIT_TOKEN_TTL_MS = 10 * 60 * 1000;
+const POLL_DEADLINE_EXCEEDED = Symbol('POLL_DEADLINE_EXCEEDED');
 
 // Must match `const MAX_TTL: u32 = 3110400` in contract/src/lib.rs.
 // Persistent storage entries are extended to this many ledgers on every write.
@@ -69,6 +71,91 @@ const rpcMetrics = {
 function logRpcCall(method, latencyMs) {
   rpcMetrics[method]++;
   logger.debug({ method, latencyMs, totalCalls: rpcMetrics[method] }, 'RPC call completed');
+}
+
+function createTransactionPollServer() {
+  return new rpc.Server(config.stellar.rpcUrl, {
+    allowHttp: config.stellar.rpcUrl.startsWith('http://'),
+  });
+}
+
+let transactionPollServerFactory = createTransactionPollServer;
+
+/** @note Exported for tests; not part of the public API. */
+export function __setTransactionPollServerForTest(factory) {
+  transactionPollServerFactory = factory ?? createTransactionPollServer;
+}
+
+async function getTransactionWithDeadline(hash, deadlineAt) {
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) return POLL_DEADLINE_EXCEEDED;
+
+  const controller = new AbortController();
+  const pollServer = transactionPollServerFactory();
+  const clientDefaults = pollServer.httpClient.defaults;
+  const previousTimeout = clientDefaults?.timeout;
+  const previousSignal = clientDefaults?.signal;
+  let timeoutId;
+
+  if (clientDefaults) {
+    clientDefaults.timeout = remainingMs;
+    clientDefaults.signal = controller.signal;
+  }
+
+  try {
+    return await Promise.race([
+      pollServer.getTransaction(hash),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => {
+          controller.abort();
+          resolve(POLL_DEADLINE_EXCEEDED);
+        }, remainingMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    if (clientDefaults) {
+      clientDefaults.timeout = previousTimeout;
+      clientDefaults.signal = previousSignal;
+    }
+  }
+}
+
+async function pollForTransaction(hash) {
+  const maxWaitMs = config.contract.txPollMaxWaitMs;
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + maxWaitMs;
+  let delayMs = TRANSACTION_POLL_INITIAL_DELAY_MS;
+  let pollCount = 0;
+  let getResult;
+
+  while (pollCount === 0 || Date.now() < deadlineAt) {
+    pollCount += 1;
+    const txStart = Date.now();
+    getResult = await getTransactionWithDeadline(hash, deadlineAt);
+    if (getResult === POLL_DEADLINE_EXCEEDED) {
+      getResult = undefined;
+      break;
+    }
+    logRpcCall('getTransaction', Date.now() - txStart);
+
+    if (getResult.status !== 'NOT_FOUND') break;
+
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0) break;
+
+    await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, remainingMs)));
+    delayMs = Math.min(delayMs * 2, maxWaitMs);
+  }
+
+  if (!getResult || getResult.status === 'NOT_FOUND') {
+    logger.warn(
+      { hash, maxWaitMs, deadlineAt, elapsedMs: Date.now() - startedAt, pollCount },
+      'Transaction confirmation polling timed out; transaction remains pending and should be checked on-chain',
+    );
+  }
+
+  return getResult;
 }
 
 export function getRpcMetrics() {
@@ -217,14 +304,7 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
 
   logger.debug({ hash: txHash }, 'Submitted Soroban transaction');
 
-  let getResult;
-  for (let i = 0; i < 20; i++) {
-    const txStart = Date.now();
-    getResult = await server.getTransaction(sendResult.hash);
-    logRpcCall('getTransaction', Date.now() - txStart);
-    if (getResult.status !== 'NOT_FOUND') break;
-    await new Promise((r) => setTimeout(r, 1500));
-  }
+  const getResult = await pollForTransaction(sendResult.hash);
 
   if (!getResult || getResult.status === 'NOT_FOUND') {
     // Leave in pendingTransactions — the tx may still confirm on-chain
@@ -1153,14 +1233,7 @@ async function submitSignedTx(signedXdr) {
 
   logger.debug({ hash: signedTxHash }, 'Submitted signed Soroban transaction');
 
-  let getResult;
-  for (let i = 0; i < 20; i++) {
-    const txStart = Date.now();
-    getResult = await server.getTransaction(sendResult.hash);
-    logRpcCall('getTransaction', Date.now() - txStart);
-    if (getResult.status !== 'NOT_FOUND') break;
-    await new Promise((r) => setTimeout(r, 1500));
-  }
+  const getResult = await pollForTransaction(sendResult.hash);
 
   if (!getResult || getResult.status === 'NOT_FOUND') {
     throw new TransactionTimeoutError(`Transaction not confirmed: ${sendResult.hash}`, sendResult.hash);
