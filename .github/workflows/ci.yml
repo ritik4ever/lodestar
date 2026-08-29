@@ -84,10 +84,9 @@ jobs:
         with:
           node-version: '22'
 
-
       - name: Install dependencies
         working-directory: backend
-        run: npm ci
+        run: npm install
 
       - name: Run tests
         working-directory: backend
@@ -107,10 +106,9 @@ jobs:
         with:
           node-version: '22'
 
-
       - name: Install dependencies
         working-directory: frontend
-        run: npm install --legacy-peer-deps
+        run: npm install
 
       - name: Type-check
         working-directory: frontend
@@ -142,7 +140,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: agent
-        run: npm ci
+        run: npm install
 
       - name: Run tests
         working-directory: agent

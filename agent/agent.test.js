@@ -417,6 +417,55 @@ describe('main — agent_complete summary', () => {
     expect(startCall[0]).toMatchObject({ event: 'agent_start', agentName: 'LodestarAgent' });
     expect(typeof startCall[0].agentAddress).toBe('string');
   });
+
+  it('exits with error when AGENT_REQUIRE_SCORING=true and registration fails', async () => {
+    process.env.AGENT_REQUIRE_SCORING = 'true';
+    // Reload module to pick up new env var
+    vi.resetModules();
+    const { main: mainReloaded, EVENT: EVENT_RELOADED } = await import('./agent.js');
+
+    global.fetch = vi.fn().mockResolvedValueOnce(makeResponse({ ok: false, status: 503 }));
+
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called');
+    });
+
+    await expect(mainReloaded()).rejects.toThrow('process.exit called');
+
+    const errorCall = logError.mock.calls.find(([f]) => f?.event === EVENT_RELOADED.AGENT_START);
+    expect(errorCall).toBeDefined();
+    expect(errorCall[1]).toContain('AGENT_REQUIRE_SCORING=true — exiting');
+
+    exitSpy.mockRestore();
+    process.env.AGENT_REQUIRE_SCORING = undefined;
+  });
+
+  it('logs warning when AGENT_REQUIRE_SCORING=false', async () => {
+    process.env.AGENT_REQUIRE_SCORING = 'false';
+    // Reload module to pick up new env var
+    vi.resetModules();
+    const { main: mainReloaded } = await import('./agent.js');
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/agents/') && !url.includes('/can-spend') && !url.includes('/payment')) {
+        return Promise.resolve(makeResponse({
+          json: () => Promise.resolve({ agent: { score: 100 }, policy: null }),
+        }));
+      }
+      if (url.includes('/api/services')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ services: [] }) }));
+      }
+      return Promise.resolve(makeResponse());
+    });
+
+    await mainReloaded();
+
+    const warnCall = logWarn.mock.calls.find(([fields, msg]) => msg?.includes('AGENT_REQUIRE_SCORING=false'));
+    expect(warnCall).toBeDefined();
+    expect(warnCall[1]).toContain('Running without spending policy enforcement');
+
+    process.env.AGENT_REQUIRE_SCORING = undefined;
+  });
 });
 
 describe('runTask — weighted fallback retry', () => {
@@ -548,7 +597,7 @@ describe('ensureRegistered — structured event fields', () => {
 
     await ensureRegistered();
 
-    const call = logInfo.mock.calls.find(([f]) => f?.event === EVENT.AGENT_REGISTERED);
+    const call = logError.mock.calls.find(([f]) => f?.event === EVENT.AGENT_REGISTERED);
     expect(call).toBeDefined();
     expect(call[0]).toMatchObject({ event: 'agent_registered', scoringEnabled: false });
   });
@@ -564,6 +613,64 @@ describe('ensureRegistered — structured event fields', () => {
     const call = logInfo.mock.calls.find(([f]) => f?.event === EVENT.AGENT_REGISTERED && f?.scoringEnabled === true);
     expect(call).toBeDefined();
     expect(call[0]).toMatchObject({ event: 'agent_registered', score: 95, scoringEnabled: true });
+  });
+
+  it('logs error when network unreachable', async () => {
+    const { ensureRegistered } = await import('./agent.js');
+    global.fetch = vi.fn().mockRejectedValueOnce(new Error('Network error'));
+
+    await ensureRegistered();
+
+    const call = logError.mock.calls.find(([f]) => f?.event === EVENT.AGENT_REGISTERED);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({ event: 'agent_registered', scoringEnabled: false });
+    expect(call[1]).toContain('Network unreachable');
+  });
+
+  it('logs error when registration call fails', async () => {
+    const { ensureRegistered } = await import('./agent.js');
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(makeResponse({ ok: false, status: 404 })) // Not registered
+      .mockResolvedValueOnce(makeResponse({ ok: false, status: 500 })); // Registration fails
+
+    await ensureRegistered();
+
+    const call = logError.mock.calls.find(([f]) => f?.event === EVENT.AGENT_REGISTERED && f?.status === 500);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({ event: 'agent_registered', scoringEnabled: false, status: 500 });
+    expect(call[1]).toContain('Registration call failed');
+  });
+
+  it('verifies registration after successful registration call', async () => {
+    const { ensureRegistered } = await import('./agent.js');
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(makeResponse({ ok: false, status: 404 })) // Not registered
+      .mockResolvedValueOnce(makeResponse({ ok: true })) // Registration succeeds
+      .mockResolvedValueOnce(makeResponse({ // Verification succeeds
+        json: () => Promise.resolve({ agent: { score: 100 }, policy: null }),
+      }));
+
+    const result = await ensureRegistered();
+
+    expect(result).toBe(true);
+    const call = logInfo.mock.calls.find(([f]) => f?.event === EVENT.AGENT_REGISTERED && f?.scoringEnabled === true);
+    expect(call).toBeDefined();
+    expect(call[1]).toContain('Registered and verified');
+  });
+
+  it('returns false when verification fails after registration', async () => {
+    const { ensureRegistered } = await import('./agent.js');
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(makeResponse({ ok: false, status: 404 })) // Not registered
+      .mockResolvedValueOnce(makeResponse({ ok: true })) // Registration succeeds
+      .mockResolvedValueOnce(makeResponse({ ok: false, status: 500 })); // Verification fails
+
+    const result = await ensureRegistered();
+
+    expect(result).toBe(false);
+    const call = logError.mock.calls.find(([f]) => f?.event === EVENT.AGENT_REGISTERED && f?.status === 500);
+    expect(call).toBeDefined();
+    expect(call[1]).toContain('verification failed');
   });
 });
 
