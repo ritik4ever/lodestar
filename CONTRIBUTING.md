@@ -1,5 +1,6 @@
 # Contributing to Lodestar
 
+Please review our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
 ## Prerequisites
 
 - Node.js ≥ 22
