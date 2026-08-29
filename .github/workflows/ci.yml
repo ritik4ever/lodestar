@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '0 0 * * 0'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -147,3 +149,41 @@ jobs:
       - name: Run tests
         working-directory: agent
         run: npm test
+
+  # ── Security: dependency vulnerability audit ──────────────────────────
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Audit backend dependencies
+        working-directory: backend
+        run: npm audit --audit-level=high
+
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+      - name: Audit agent dependencies
+        working-directory: agent
+        run: npm audit --audit-level=high
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit contract dependencies
+        working-directory: contract
+        run: cargo audit
+
+      - name: Audit contract agents dependencies
+        working-directory: contract/agents
+        run: cargo audit
+
