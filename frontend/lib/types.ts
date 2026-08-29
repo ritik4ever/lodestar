@@ -45,7 +45,14 @@ export interface ActivityEntry {
   txHash: string;
 }
 
-export type FreighterStatus = 'not-installed' | 'not-connected' | 'connected';
+export type FreighterStatus = 'not-installed' | 'locked' | 'wrong-network' | 'not-connected' | 'connected';
+
+export interface WalletErrorState {
+  type: FreighterStatus;
+  message: string;
+  currentNetwork?: string;
+  requiredNetwork?: string;
+}
 export type WalletMode = 'freighter' | 'keypair';
 
 export type SortOption = 'newest' | 'reputation' | 'price';

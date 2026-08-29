@@ -8,6 +8,9 @@ import { Networks } from '@creit-tech/stellar-wallets-kit/types';
 export { Networks as WalletNetworks };
 export { FREIGHTER_ID, ALBEDO_ID, XBULL_ID, LOBSTR_ID };
 
+/** The Stellar network passphrase expected by Lodestar */
+export const EXPECTED_NETWORK_PASSPHRASE = Networks.TESTNET;
+
 export enum WalletErrorType {
   WALLET_NOT_FOUND = 'WALLET_NOT_FOUND',
   UNSUPPORTED_BROWSER = 'UNSUPPORTED_BROWSER',
