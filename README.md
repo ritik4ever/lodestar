@@ -46,6 +46,8 @@ AI agents can already pay for services via the x402 protocol on Stellar. But the
 
 Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. Service providers call `register_service` once. AI agents call `list_services`, pick the best result by reputation, hit the endpoint, and pay via x402 — all without a single hardcoded URL. The registry is permanent and permissionless: no owner, no gatekeeping, no downtime.
 
+> **Immutability:** Both the registry and the agents contract are **immutable by design** — they expose no contract-upgrade entrypoint, so no entity can rewrite a deployed contract's rules or records in place. This is a recorded decision, not an omission. See [ADR-0001 — Contract Immutability & Upgrade Policy](docs/adr/0001-contract-immutability.md), which also documents the v2 migration path for shipping contract revisions as new deployments.
+
 ---
 
 ## Architecture

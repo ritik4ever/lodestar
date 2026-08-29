@@ -1,5 +1,14 @@
 #![no_std]
 
+//! Agent reputation, credit scoring, and spend-policy management for Lodestar.
+//!
+//! Immutable by design — see `docs/adr/0001-contract-immutability.md`
+//! (ADR-0001). No `update_current_contract_wasm` entrypoint exists and none may
+//! be added without reversing ADR-0001; the regression test
+//! `test_contract_is_not_upgradeable` enforces the invariant. The `admin` role
+//! is operational only (flag/deactivate agents, transfer itself) and cannot
+//! change contract code or scoring rules.
+
 use soroban_sdk::{
     contract, contractimpl, contracttype, vec,
     Address, Env, IntoVal, String, Symbol, Vec,
@@ -884,6 +893,29 @@ mod test {
         assert_eq!(config.score_success, SCORE_SUCCESS);
         assert_eq!(config.score_failure, SCORE_FAILURE);
         assert_eq!(config.flag_penalty, FLAG_PENALTY);
+    }
+
+    #[test]
+    fn test_contract_is_not_upgradeable() {
+        // ADR-0001: the agents contract is immutable by design. The Soroban
+        // upgrade entrypoint (`update_current_contract_wasm`) must not be
+        // exposed; a host-level failure here means the entrypoint does not
+        // exist, so no caller — including the admin or the deployer — can swap
+        // the WASM, change scoring rules, or insert a caveat.
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin,));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let result = env.try_invoke_contract::<(), soroban_sdk::Error>(
+            &client.address,
+            &Symbol::new(&env, "update_current_contract_wasm"),
+            Vec::new(&env),
+        );
+        assert!(
+            result.is_err(),
+            "immutable contract must not expose an upgrade entrypoint"
+        );
     }
 
     /// Seed a non-zero `daily_spent_stroops` directly into contract storage.

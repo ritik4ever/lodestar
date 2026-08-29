@@ -7,10 +7,12 @@ This document covers the component responsibilities, data flow, trust boundaries
 1. **LodestarRegistry (Soroban Contract)**
    - **Role:** Permanent, neutral on-chain registry for services.
    - **Responsibility:** Stores `ServiceEntry` structures containing provider address, endpoint URL, price, category, and reputation score. Handles reputation scoring and category filtering without gatekeeping.
+   - **Immutability:** Immutable by design (no `update_current_contract_wasm` entrypoint); revisions ship as new v2 deployments. See [ADR-0001](adr/0001-contract-immutability.md).
 
 2. **LodestarAgents (Soroban Contract)**
    - **Role:** Agent identity and trust layer.
    - **Responsibility:** Tracks AI agent identities and their on-chain credit scores (0-1000). Manages and enforces programmable spending policies per agent (e.g., maximum USDC per transaction, maximum per day). Records payments and determines service eligibility based on score.
+   - **Immutability:** Immutable by design; the `admin` role is operational only (flag/deactivate agents, transfer itself) and cannot change contract code or scoring rules. See [ADR-0001](adr/0001-contract-immutability.md).
 
 3. **Backend (Express)**
    - **Role:** Off-chain facilitator and demo service provider.
