@@ -16,6 +16,44 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 const EXPLORER_URL =
   process.env.NEXT_PUBLIC_EXPLORER_URL ?? 'https://stellar.expert/explorer/testnet';
 
+const SCORE_SUCCESS = 10;
+const SCORE_FAILURE = -25;
+const INITIAL_SCORE = 100;
+
+function buildScoreHistory(totalPayments: number, successfulPayments: number): number[] {
+  if (totalPayments === 0) return [INITIAL_SCORE];
+  const samples = Math.min(totalPayments + 1, 26);
+  const points: number[] = [];
+  for (let s = 0; s < samples; s++) {
+    const paid = Math.round((s / (samples - 1)) * totalPayments);
+    const wins = Math.round((paid / totalPayments) * successfulPayments);
+    const losses = paid - wins;
+    points.push(Math.max(0, Math.min(1000, INITIAL_SCORE + wins * SCORE_SUCCESS + losses * SCORE_FAILURE)));
+  }
+  return points;
+}
+
+function ScoreSparkline({ points, currentScore }: { points: number[]; currentScore: number }) {
+  const W = 300;
+  const H = 48;
+  const pad = 4;
+  const minY = 0;
+  const maxY = 1000;
+  const toX = (i: number) => pad + (i / (points.length - 1)) * (W - pad * 2);
+  const toY = (v: number) => H - pad - ((v - minY) / (maxY - minY)) * (H - pad * 2);
+  const polyline = points.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
+  const lastX = toX(points.length - 1);
+  const lastY = toY(points[points.length - 1]);
+  const color = currentScore >= 800 ? '#f59e0b' : currentScore >= 600 ? '#10b981' : currentScore >= 300 ? '#8b5cf6' : '#3b82f6';
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H }}>
+      <polyline fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" points={polyline} />
+      <circle cx={lastX} cy={lastY} r="3" fill={color} />
+    </svg>
+  );
+}
+
 const ACCESS_TIERS = [
   { label: 'Basic services', minScore: 0 },
   { label: 'Standard services', minScore: 300 },
@@ -274,6 +312,24 @@ export default function AgentProfilePage() {
             color={successRate !== null && successRate >= 90 ? 'success' : undefined}
           />
         </div>
+
+        {/* Score history sparkline */}
+        {agent.total_payments > 0 && (
+          <div className="mt-4 border-t border-border pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-secondary">Score trajectory (approx.)</span>
+              <span className="mono text-xs text-secondary">100 → {agent.score}</span>
+            </div>
+            <ScoreSparkline
+              points={buildScoreHistory(agent.total_payments, agent.successful_payments)}
+              currentScore={agent.score}
+            />
+            <div className="flex justify-between text-xs text-secondary mt-1">
+              <span>Start</span>
+              <span>{agent.total_payments} payments</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Spending policy */}
