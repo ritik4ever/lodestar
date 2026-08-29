@@ -331,6 +331,8 @@ Lodestar addresses all three brief requirements:
 
 - **Frontend**: https://lodestar-ruddy.vercel.app
 - **Backend API**: https://lodestar-8na4.onrender.com/api/services
+- **Liveness Probe**: https://lodestar-8na4.onrender.com/livez (Process health only, no external dependencies)
+- **Readiness Probe**: https://lodestar-8na4.onrender.com/healthz or `/readyz` (RPC and contract reachability)
 - **Health Check**: https://lodestar-8na4.onrender.com/healthz
 - **Deployments**: [contract/deployments.json](contract/deployments.json) — canonical source of truth for all live contract addresses and WASM hashes
 - **Registry Contract**: [`CAKZALA72JTR6BV6N44E7L52C7QU5BAYYKVKYR2DFSV2YD2A2OI6WJMP`](https://stellar.expert/explorer/testnet/contract/CAKZALA72JTR6BV6N44E7L52C7QU5BAYYKVKYR2DFSV2YD2A2OI6WJMP)

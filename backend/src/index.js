@@ -67,7 +67,11 @@ app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(requestIdMiddleware);
 app.use(express.json({ limit: config.jsonBodyLimit }));
 
-app.get("/healthz", async (req, res) => {
+app.get("/livez", (_req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+app.get(["/healthz", "/readyz"], async (_req, res) => {
   try {
     const health = await checkRpcHealth();
     const queueDepth = getSubmitQueueDepth();
