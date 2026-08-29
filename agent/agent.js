@@ -236,6 +236,8 @@ export function dispose() {
 }
 
 const STROOPS_PER_USDC = 10_000_000;
+const X402_PAYMENT_MAX_ATTEMPTS = 4;
+const X402_PAYMENT_BACKOFF_MS = 200;
 
 function stroopsToUsdcStr(stroops) {
   return String(Number(stroops) / STROOPS_PER_USDC);
@@ -245,7 +247,11 @@ function usdcStrToStroops(usdcStr) {
   return BigInt(Math.round(parseFloat(usdcStr) * STROOPS_PER_USDC));
 }
 
-function buildHttpClient() {
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function buildHttpClient() {
   // Re-read the secret for the x402 signer since the module-level reference
   // has already been zeroed. loadSecret() re-reads from the env var or file.
   const secretForSigner = loadSecret();
@@ -256,20 +262,45 @@ function buildHttpClient() {
 
   // Implement fetch manually — x402HTTPClient.fetch() was removed in this version
   httpClient.fetch = async (url, init = {}) => {
-    const probe = await fetchWithTimeout(url, init);
+    const originalHeaders = init.headers instanceof Headers
+      ? Object.fromEntries(init.headers.entries())
+      : { ...(init.headers ?? {}) };
+
+    let probe = await fetchWithTimeout(url, { ...init, headers: originalHeaders });
     if (probe.status !== 402) return probe;
 
     const paymentRequired = httpClient.getPaymentRequiredResponse(
       (name) => probe.headers.get(name),
-      probe.status === 402 ? await probe.json().catch(() => undefined) : undefined
+      await probe.json().catch(() => undefined)
     );
 
-    const paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
+    let paymentPayload;
+    try {
+      paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
+    } catch (err) {
+      throw err;
+    }
+
     const paymentHeaders = httpClient.encodePaymentSignatureHeader(paymentPayload);
-    return fetchWithTimeout(url, {
-      ...init,
-      headers: { ...(init.headers ?? {}), ...paymentHeaders },
-    });
+    const retryInit = { ...init, headers: { ...originalHeaders, ...paymentHeaders } };
+
+    for (let attempt = 1; attempt <= X402_PAYMENT_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        probe = await fetchWithTimeout(url, retryInit);
+      } catch (err) {
+        if (attempt === X402_PAYMENT_MAX_ATTEMPTS) throw err;
+        await delay(X402_PAYMENT_BACKOFF_MS * 2 ** (attempt - 1));
+        continue;
+      }
+
+      if (probe.status !== 402 || attempt === X402_PAYMENT_MAX_ATTEMPTS) {
+        return probe;
+      }
+
+      await delay(X402_PAYMENT_BACKOFF_MS * 2 ** (attempt - 1));
+    }
+
+    return probe;
   };
 
   return httpClient;
@@ -395,11 +426,9 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
       'Sending x402 payment on Stellar'
     );
 
-    const paymentPayload = { url: endpointUrl, method: 'GET' };
-    const paymentHeaders = client.encodePaymentSignatureHeader(paymentPayload);
     let response;
     try {
-      response = await fetchWithTimeout(endpointUrl, { headers: paymentHeaders, keepalive: true });
+      response = await client.fetch(endpointUrl, { keepalive: true });
     } catch (err) {
       logger.error(
         {
@@ -412,6 +441,24 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
           taskDurationMs: Date.now() - taskStart,
         },
         'Payment failed — network error'
+      );
+      if (scoringEnabled) await recordOutcome(selected.price_usdc, false, selected.id);
+      failed.add(selected.id);
+      continue;
+    }
+
+    if (response.status === 402) {
+      logger.error(
+        {
+          event: EVENT.PAYMENT_FAILED,
+          category,
+          serviceId: selected.id,
+          serviceName: selected.name,
+          priceUsdc: selected.price_usdc,
+          httpStatus: response.status,
+          taskDurationMs: Date.now() - taskStart,
+        },
+        'Payment failed — retry budget exhausted'
       );
       if (scoringEnabled) await recordOutcome(selected.price_usdc, false, selected.id);
       failed.add(selected.id);

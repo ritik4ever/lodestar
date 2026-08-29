@@ -25,7 +25,11 @@ vi.mock('@stellar/stellar-sdk', () => ({
 
 vi.mock('@x402/core/client', () => ({
   x402Client: class { register() { return this; } },
-  x402HTTPClient: class { encodePaymentSignatureHeader() { return {}; } },
+  x402HTTPClient: class {
+    encodePaymentSignatureHeader() { return {}; }
+    getPaymentRequiredResponse() { return { url: 'https://api.example.com/weather', method: 'GET' }; }
+    async createPaymentPayload(paymentRequired) { return { payload: paymentRequired }; }
+  },
 }));
 
 vi.mock('@x402/stellar', () => ({ createEd25519Signer: () => ({}) }));
@@ -42,7 +46,7 @@ const mockHttpClient = {
   fetch: (...args) => global.fetch(...args),
 };
 
-const { runTask, main, EVENT } = await import('./agent.js');
+const { runTask, main, buildHttpClient, EVENT } = await import('./agent.js');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -145,12 +149,10 @@ describe('runTask — happy path', () => {
     expect(call[0].taskDurationMs).toBeGreaterThanOrEqual(0);
   });
 
-  it('calls encodePaymentSignatureHeader with expected payload', async () => {
+  it('uses the x402 client fetch path when provided', async () => {
+    const spy = vi.spyOn(mockHttpClient, 'fetch');
     await runTask('weather', (ep) => ep, true, mockHttpClient);
-
-    expect(mockHttpClient.encodePaymentSignatureHeader).toHaveBeenCalledWith(
-      { url: 'https://api.example.com/weather', method: 'GET' }
-    );
+    expect(spy).toHaveBeenCalledWith('https://api.example.com/weather', { keepalive: true });
   });
 
   it('returns { success: true, priceUsdc } on success', async () => {
@@ -416,6 +418,47 @@ describe('main — agent_complete summary', () => {
     expect(startCall).toBeDefined();
     expect(startCall[0]).toMatchObject({ event: 'agent_start', agentName: 'LodestarAgent' });
     expect(typeof startCall[0].agentAddress).toBe('string');
+  });
+});
+
+describe('buildHttpClient.fetch — x402 retry/backoff', () => {
+  it('retries a transient 402 payment flow and succeeds on a later attempt', async () => {
+    const client = buildHttpClient();
+    let callCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return Promise.resolve(makeResponse({
+          ok: false,
+          status: 402,
+          headers: { get: () => 'txhash123' },
+          json: () => Promise.resolve({}),
+        }));
+      }
+      return Promise.resolve(makeResponse({ ok: true, status: 200 }));
+    });
+
+    const res = await client.fetch('https://api.example.com/weather', { method: 'GET' });
+    expect(res.ok).toBe(true);
+    expect(callCount).toBe(2);
+  });
+
+  it('returns the last 402 response after exhausting retry attempts', async () => {
+    const client = buildHttpClient();
+    let callCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      callCount += 1;
+      return Promise.resolve(makeResponse({
+        ok: false,
+        status: 402,
+        headers: { get: () => null },
+        json: () => Promise.resolve({}),
+      }));
+    });
+
+    const res = await client.fetch('https://api.example.com/weather', { method: 'GET' });
+    expect(res.status).toBe(402);
+    expect(callCount).toBe(5);
   });
 });
 
