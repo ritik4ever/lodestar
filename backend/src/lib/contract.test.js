@@ -909,3 +909,45 @@ describe('submitQueue management', () => {
     await promise;
   });
 });
+
+describe('parseRetval', () => {
+  it('returns null for null input', () => {
+    expect(contractLib.parseRetval(null, 'u64')).toBeNull();
+  });
+
+  it('returns null for undefined input', () => {
+    expect(contractLib.parseRetval(undefined, 'u64')).toBeNull();
+  });
+
+  it('returns null for scvVoid() when expectedType is u64 (truthy-object trap)', () => {
+    // scvVoid() is a truthy JS object — the old `!retval` guard missed this,
+    // causing scValToNative(scvVoid()) → undefined → Number(undefined) → NaN.
+    const scvVoid = sdkPkg.xdr.ScVal.scvVoid();
+    expect(contractLib.parseRetval(scvVoid, 'u64')).toBeNull();
+  });
+
+  it('returns null for scvVoid() when expectedType is void', () => {
+    const scvVoid = sdkPkg.xdr.ScVal.scvVoid();
+    expect(contractLib.parseRetval(scvVoid, 'void')).toBeNull();
+  });
+
+  it('decodes scvU64(5n) to a BigInt for expectedType u64', () => {
+    const scvU64 = sdkPkg.nativeToScVal(5n, { type: 'u64' });
+    const result = contractLib.parseRetval(scvU64, 'u64');
+    expect(typeof result).toBe('bigint');
+    expect(result).toBe(5n);
+  });
+
+  it('decodes scvBool(true) to boolean for expectedType bool', () => {
+    const scvBool = sdkPkg.nativeToScVal(true, { type: 'bool' });
+    expect(contractLib.parseRetval(scvBool, 'bool')).toBe(true);
+  });
+
+  it('throws ReturnValueParseError when decoded type mismatches expectedType', () => {
+    // scvU64 decoded is a BigInt; expecting 'bool' should throw
+    const scvU64 = sdkPkg.nativeToScVal(5n, { type: 'u64' });
+    expect(() => contractLib.parseRetval(scvU64, 'bool')).toThrow(
+      expect.objectContaining({ name: 'ReturnValueParseError', code: 'RETURN_VALUE_PARSE_FAILED' })
+    );
+  });
+});
