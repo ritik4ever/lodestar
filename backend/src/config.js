@@ -151,6 +151,34 @@ const config = Object.freeze({
     baseDelayMs: parsePositiveInt(process.env.RPC_RETRY_BASE_DELAY_MS, 200, 'RPC_RETRY_BASE_DELAY_MS'),
     maxDelayMs: parsePositiveInt(process.env.RPC_RETRY_MAX_DELAY_MS, 5_000, 'RPC_RETRY_MAX_DELAY_MS'),
   },
+
+  // Auth middleware response tuning. The HTTP status codes and error codes
+  // returned by the ownerAuth middleware (backend/src/middleware/ownerAuth.js)
+  // used to be hardcoded literals; they are now configurable so operators can
+  // adjust API responses without a code change. Defaults below preserve the
+  // original behaviour exactly.
+  ownerAuth: {
+    missing: {
+      status: parsePositiveInt(process.env.OWNER_AUTH_MISSING_STATUS, 401, 'OWNER_AUTH_MISSING_STATUS'),
+      code: process.env.OWNER_AUTH_MISSING_CODE ?? 'AUTH_MISSING',
+    },
+    invalidParams: {
+      status: parsePositiveInt(process.env.OWNER_AUTH_INVALID_PARAMS_STATUS, 400, 'OWNER_AUTH_INVALID_PARAMS_STATUS'),
+      code: process.env.OWNER_AUTH_INVALID_PARAMS_CODE ?? 'INVALID_PARAMS',
+    },
+    notFound: {
+      status: parsePositiveInt(process.env.OWNER_AUTH_NOT_FOUND_STATUS, 404, 'OWNER_AUTH_NOT_FOUND_STATUS'),
+      code: process.env.OWNER_AUTH_NOT_FOUND_CODE ?? 'NOT_FOUND',
+    },
+    forbidden: {
+      status: parsePositiveInt(process.env.OWNER_AUTH_FORBIDDEN_STATUS, 403, 'OWNER_AUTH_FORBIDDEN_STATUS'),
+      code: process.env.OWNER_AUTH_FORBIDDEN_CODE ?? 'FORBIDDEN',
+    },
+    internalError: {
+      status: parsePositiveInt(process.env.OWNER_AUTH_ERROR_STATUS, 500, 'OWNER_AUTH_ERROR_STATUS'),
+      code: process.env.OWNER_AUTH_ERROR_CODE ?? 'AUTH_ERROR',
+    },
+  },
 });
 
 export default config;

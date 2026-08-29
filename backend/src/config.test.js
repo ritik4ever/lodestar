@@ -28,6 +28,16 @@ async function loadConfig(overrides = {}) {
     'DEMO_RUN_POLL_MAX_WAIT_MS',
     'DEMO_RUN_POLL_INITIAL_DELAY_MS',
     'DEMO_RUN_POLL_MAX_DELAY_MS',
+    'OWNER_AUTH_MISSING_STATUS',
+    'OWNER_AUTH_MISSING_CODE',
+    'OWNER_AUTH_INVALID_PARAMS_STATUS',
+    'OWNER_AUTH_INVALID_PARAMS_CODE',
+    'OWNER_AUTH_NOT_FOUND_STATUS',
+    'OWNER_AUTH_NOT_FOUND_CODE',
+    'OWNER_AUTH_FORBIDDEN_STATUS',
+    'OWNER_AUTH_FORBIDDEN_CODE',
+    'OWNER_AUTH_ERROR_STATUS',
+    'OWNER_AUTH_ERROR_CODE',
   ]) {
     if (!(key in overrides)) delete process.env[key];
   }
@@ -115,6 +125,52 @@ describe('config demoRun polling env validation', () => {
   });
 });
 
+describe('config ownerAuth response env validation', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it('uses the original status/error codes when ownerAuth vars are unset', async () => {
+    const config = await loadConfig();
+    expect(config.ownerAuth.missing).toEqual({ status: 401, code: 'AUTH_MISSING' });
+    expect(config.ownerAuth.invalidParams).toEqual({ status: 400, code: 'INVALID_PARAMS' });
+    expect(config.ownerAuth.notFound).toEqual({ status: 404, code: 'NOT_FOUND' });
+    expect(config.ownerAuth.forbidden).toEqual({ status: 403, code: 'FORBIDDEN' });
+    expect(config.ownerAuth.internalError).toEqual({ status: 500, code: 'AUTH_ERROR' });
+  });
+
+  it('honors status and code overrides', async () => {
+    const config = await loadConfig({
+      OWNER_AUTH_FORBIDDEN_STATUS: '451',
+      OWNER_AUTH_FORBIDDEN_CODE: 'NOT_ALLOWED',
+      OWNER_AUTH_MISSING_STATUS: '498',
+      OWNER_AUTH_MISSING_CODE: 'NO_CALLER',
+    });
+    expect(config.ownerAuth.forbidden).toEqual({ status: 451, code: 'NOT_ALLOWED' });
+    expect(config.ownerAuth.missing).toEqual({ status: 498, code: 'NO_CALLER' });
+  });
+
+  it('falls back and warns on non-numeric status values', async () => {
+    const config = await loadConfig({
+      OWNER_AUTH_ERROR_STATUS: 'abc',
+      OWNER_AUTH_NOT_FOUND_STATUS: '0',
+    });
+    expect(config.ownerAuth.internalError.status).toBe(500);
+    expect(config.ownerAuth.notFound.status).toBe(404);
+    expect(console.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the default code when only a code override is absent', async () => {
+    const config = await loadConfig({ OWNER_AUTH_NOT_FOUND_STATUS: '410' });
+    expect(config.ownerAuth.notFound).toEqual({ status: 410, code: 'NOT_FOUND' });
+  });
+});
+
 describe('config x402.payTo PAYMENT_ADDRESS validation', () => {
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
@@ -143,6 +199,16 @@ describe('config x402.payTo PAYMENT_ADDRESS validation', () => {
       'DEMO_RUN_POLL_MAX_WAIT_MS',
       'DEMO_RUN_POLL_INITIAL_DELAY_MS',
       'DEMO_RUN_POLL_MAX_DELAY_MS',
+      'OWNER_AUTH_MISSING_STATUS',
+      'OWNER_AUTH_MISSING_CODE',
+      'OWNER_AUTH_INVALID_PARAMS_STATUS',
+      'OWNER_AUTH_INVALID_PARAMS_CODE',
+      'OWNER_AUTH_NOT_FOUND_STATUS',
+      'OWNER_AUTH_NOT_FOUND_CODE',
+      'OWNER_AUTH_FORBIDDEN_STATUS',
+      'OWNER_AUTH_FORBIDDEN_CODE',
+      'OWNER_AUTH_ERROR_STATUS',
+      'OWNER_AUTH_ERROR_CODE',
     ]) {
       delete process.env[key];
     }
