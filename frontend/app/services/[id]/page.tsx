@@ -6,6 +6,7 @@ import Link from 'next/link';
 import type { ServiceEntry } from '@/lib/types';
 import { fetchServiceById } from '@/lib/contract';
 import ServiceCard from '@/components/ServiceCard';
+import { serviceDetailStrings } from './strings';
 
 export default function ServiceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -20,7 +21,7 @@ export default function ServiceDetailPage() {
 
     const numericId = Number(id);
     if (!Number.isFinite(numericId)) {
-      setError('Invalid service id');
+      setError(serviceDetailStrings.error.invalidServiceId);
       setLoading(false);
       return;
     }
@@ -36,7 +37,7 @@ export default function ServiceDetailPage() {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('Failed to load service');
+        setError(serviceDetailStrings.error.failedToLoadService);
       }
     } finally {
       setLoading(false);
@@ -58,16 +59,16 @@ export default function ServiceDetailPage() {
   if (error || !service) {
     return (
       <div className="max-w-4xl mx-auto px-6 py-24 text-center">
-        <p className="text-error text-sm mb-4">{error ?? 'Service not found'}</p>
+        <p className="text-error text-sm mb-4">{error ?? serviceDetailStrings.error.serviceNotFound}</p>
         <div className="flex justify-center gap-3 flex-wrap">
           <Link href="/registry" className="btn-secondary px-5 py-2.5 text-sm">
-            Back to registry
+            {serviceDetailStrings.errorActions.backToRegistry}
           </Link>
           <button
             onClick={() => router.refresh()}
             className="btn-primary px-5 py-2.5 text-sm"
           >
-            Retry
+            {serviceDetailStrings.errorActions.retry}
           </button>
         </div>
       </div>
@@ -80,7 +81,7 @@ export default function ServiceDetailPage() {
         href="/registry"
         className="text-sm text-secondary hover:text-primary transition-colors mb-8 inline-block"
       >
-        ← All services
+        {serviceDetailStrings.navigation.allServices}
       </Link>
 
       <ServiceCard service={service} />
