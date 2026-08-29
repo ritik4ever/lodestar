@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
-import type { AgentsResponse, AgentStats, AgentSortOption } from '@/lib/types';
+import type { AgentsResponse, AgentStats, AgentSortOption, ScoreTier } from '@/lib/types';
+import { scoreTier, TIER_LABELS, TIER_COLORS } from '@/lib/types';
 import { fetchAgents, fetchAgentStats } from '@/lib/contract';
 import { sortAgents } from '@/lib/sort';
 import AgentCard from '@/components/AgentCard';
@@ -22,6 +23,7 @@ export default function AgentsPage() {
   const [sort, setSort] = useState<AgentSortOption>('score');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZE);
+  const [tierFilter, setTierFilter] = useState<ScoreTier | null>(null);
 
   // SWR replaces the manual setInterval poll: it dedupes concurrent requests,
   // revalidates every 30s, and only re-renders when the returned data changes.
@@ -47,7 +49,10 @@ export default function AgentsPage() {
     { refreshInterval: 30_000, revalidateOnFocus: false, keepPreviousData: true }
   );
 
-  const agents = data?.agents ?? [];
+  const allAgents = data?.agents ?? [];
+  const agents = tierFilter
+    ? allAgents.filter((a) => scoreTier(a.score) === tierFilter)
+    : allAgents;
   const total = data?.total ?? 0;
   const loading = isLoading && !data;
   const refreshing = isValidating && !isLoading;
@@ -77,6 +82,11 @@ export default function AgentsPage() {
 
   function handlePageSizeChange(next: number) {
     setPageSize(next);
+    setPage(0);
+  }
+
+  function handleTierFilter(tier: ScoreTier) {
+    setTierFilter((prev) => (prev === tier ? null : tier));
     setPage(0);
   }
 
@@ -136,15 +146,39 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {/* Score tier legend */}
-      <div className="card p-4 mb-8 flex flex-wrap gap-3 items-center">
-        <span className="text-xs text-secondary font-medium uppercase tracking-widest mr-2">Score tiers</span>
-        {([100, 450, 700, 950, 1000] as const).map((score) => (
-          <ScoreBadge key={score} score={score} showScore={false} />
-        ))}
-        <span className="text-xs text-secondary ml-auto">
-          +10 per success · −25 per failure · cap 1000
-        </span>
+      {/* Score tier filter chips */}
+      <div className="card p-4 mb-8 flex flex-wrap gap-2 items-center">
+        <span className="text-xs text-secondary font-medium uppercase tracking-widest mr-2">Filter by tier</span>
+        {(['new', 'building', 'established', 'trusted', 'elite'] as ScoreTier[]).map((tier) => {
+          const active = tierFilter === tier;
+          return (
+            <button
+              key={tier}
+              onClick={() => handleTierFilter(tier)}
+              aria-pressed={active}
+              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                active
+                  ? `${TIER_COLORS[tier]} border-current`
+                  : 'border-border text-secondary hover:border-primary hover:text-primary bg-background'
+              }`}
+            >
+              {TIER_LABELS[tier]}
+            </button>
+          );
+        })}
+        {tierFilter && (
+          <button
+            onClick={() => { setTierFilter(null); setPage(0); }}
+            className="ml-auto text-xs text-secondary hover:text-primary underline"
+          >
+            Clear filter
+          </button>
+        )}
+        {!tierFilter && (
+          <span className="text-xs text-secondary ml-auto">
+            +10 per success · −25 per failure · cap 1000
+          </span>
+        )}
       </div>
 
       {/* Content */}
