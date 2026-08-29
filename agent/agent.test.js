@@ -13,9 +13,23 @@ const { logInfo, logWarn, logError, logDebug } = vi.hoisted(() => ({
 
 vi.mock('dotenv/config', () => ({}));
 
-vi.mock('pino', () => ({
-  default: () => ({ info: logInfo, warn: logWarn, error: logError, debug: logDebug }),
-}));
+vi.mock('pino', () => {
+  // Simulate pino child-logger semantics: `child(bindings)` returns a logger
+  // whose bindings are merged into every emitted line, so tests can assert that
+  // a run's runId is present on all events (#825).
+  const withBindings = (fields, bindings) =>
+    typeof fields === 'string' ? { ...bindings, msg: fields } : { ...bindings, ...fields };
+
+  const makeLogger = (bindings = {}) => ({
+    info: (fields, msg) => logInfo(withBindings(fields, bindings), msg),
+    warn: (fields, msg) => logWarn(withBindings(fields, bindings), msg),
+    error: (fields, msg) => logError(withBindings(fields, bindings), msg),
+    debug: (fields, msg) => logDebug(withBindings(fields, bindings), msg),
+    child: (b) => makeLogger({ ...bindings, ...b }),
+  });
+
+  return { default: () => makeLogger() };
+});
 
 vi.mock('@stellar/stellar-sdk', () => ({
   default: {
@@ -567,6 +581,47 @@ describe('ensureRegistered — structured event fields', () => {
   });
 });
 
+describe('run id correlation (#825)', () => {
+  it('binds a single runId to every log line emitted during main()', async () => {
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/agents/') && !url.includes('/can-spend') && !url.includes('/payment')) {
+        return Promise.resolve(makeResponse({
+          json: () => Promise.resolve({ agent: { score: 100 }, policy: null }),
+        }));
+      }
+      if (url.includes('/api/services')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ services: [MOCK_SERVICE] }) }));
+      }
+      if (url.includes('/can-spend')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ allowed: true, reason: 'OK' }) }));
+      }
+      if (url.includes('/payment')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ newScore: 105 }) }));
+      }
+      return Promise.resolve(makeResponse());
+    });
+
+    await main();
+
+    const startCall = logInfo.mock.calls.find(([f]) => f?.event === EVENT.AGENT_START);
+    expect(startCall).toBeDefined();
+    const runId = startCall[0].runId;
+    expect(typeof runId).toBe('string');
+    expect(runId.length).toBeGreaterThan(0);
+
+    const lines = [
+      ...logInfo.mock.calls,
+      ...logWarn.mock.calls,
+      ...logError.mock.calls,
+      ...logDebug.mock.calls,
+    ].map(([fields]) => fields);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const fields of lines) {
+      expect(fields.runId).toBe(runId);
+    }
+  });
+});
+
 describe('graceful shutdown', () => {
   afterEach(() => {
     delete process.env.AGENT_SHUTDOWN_TIMEOUT_MS;
@@ -584,5 +639,83 @@ describe('graceful shutdown', () => {
 
     // completeShutdown calls process.exit(1) which would throw in test, so we just verify initiate
     expect(initCall[0]).toHaveProperty('signal', 'SIGTERM');
+  });
+});
+
+describe('submitReputation — structured events (#825)', () => {
+  function reputationFetch({ repStatus = 200, repError = null } = {}) {
+    return vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/services')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ services: [MOCK_SERVICE] }) }));
+      }
+      if (url.includes('/reputation')) {
+        return repError
+          ? Promise.reject(repError)
+          : Promise.resolve(makeResponse({ ok: repStatus < 300, status: repStatus }));
+      }
+      return Promise.resolve(makeResponse());
+    });
+  }
+
+  it('logs reputation_submitted with outcome applied and the stable field set on success', async () => {
+    global.fetch = reputationFetch();
+
+    await runTask('weather', (ep) => ep, false, mockHttpClient);
+
+    const call = logInfo.mock.calls.find(([f]) => f?.event === EVENT.REPUTATION_SUBMITTED);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({
+      event: 'reputation_submitted',
+      serviceId: MOCK_SERVICE.id,
+      priceUsdc: MOCK_SERVICE.price_usdc,
+      positive: true,
+      outcome: 'applied',
+    });
+  });
+
+  it('logs a negative vote with positive: false when the endpoint returns bad data', async () => {
+    global.fetch = buildFetch({ endpointOk: false });
+
+    await runTask('weather', (ep) => ep, false, mockHttpClient);
+
+    const call = logInfo.mock.calls.find(([f]) => f?.event === EVENT.REPUTATION_SUBMITTED);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({ serviceId: MOCK_SERVICE.id, positive: false, outcome: 'applied' });
+  });
+
+  it('logs outcome not_applied with httpStatus when the server rejects the vote', async () => {
+    global.fetch = reputationFetch({ repStatus: 500 });
+
+    await runTask('weather', (ep) => ep, false, mockHttpClient);
+
+    const call = logWarn.mock.calls.find(([f]) => f?.event === EVENT.REPUTATION_SUBMITTED);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({
+      event: 'reputation_submitted',
+      serviceId: MOCK_SERVICE.id,
+      priceUsdc: MOCK_SERVICE.price_usdc,
+      positive: true,
+      outcome: 'not_applied',
+      httpStatus: 500,
+    });
+  });
+
+  it('logs outcome failed with err when the reputation request throws, without aborting the run', async () => {
+    global.fetch = reputationFetch({ repError: new Error('Reputation API unreachable') });
+
+    const result = await runTask('weather', (ep) => ep, false, mockHttpClient);
+
+    const call = logError.mock.calls.find(([f]) => f?.event === EVENT.REPUTATION_SUBMITTED);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({
+      event: 'reputation_submitted',
+      serviceId: MOCK_SERVICE.id,
+      priceUsdc: MOCK_SERVICE.price_usdc,
+      positive: true,
+      outcome: 'failed',
+    });
+    expect(call[0].err).toBeInstanceOf(Error);
+    // A failed vote is best-effort and must not turn a success into a failure.
+    expect(result).toMatchObject({ success: true, priceUsdc: MOCK_SERVICE.price_usdc });
   });
 });
