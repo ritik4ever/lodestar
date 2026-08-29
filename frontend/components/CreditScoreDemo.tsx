@@ -38,7 +38,10 @@ export default function CreditScoreDemo() {
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 10_000);
+    // 30s matches the polling cadence used by the agents/registry pages — a
+    // tighter interval here tripled background RPC pressure when multiple tabs
+    // were open at once.
+    const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -96,7 +99,7 @@ export default function CreditScoreDemo() {
         </h2>
         <p className="text-secondary text-sm leading-relaxed max-w-2xl">
           Three agents, three score levels, three different levels of access. Scores are
-          pulled live from the Soroban contract every 10 seconds.
+          pulled live from the Soroban contract every 30 seconds.
         </p>
         <div className="mt-4 flex items-center gap-3">
           <label htmlFor="premiumMinScore" className="text-sm text-secondary">
