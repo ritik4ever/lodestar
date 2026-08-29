@@ -16,7 +16,7 @@ import {
 import { getCurrentLedgerSequence } from "../lib/stellar.js";
 import { getReputationHistory } from "../lib/reputationHistory.js";
 import logger from "../lib/logger.js";
-import { ContractError } from "../lib/ContractError.js";
+import { ContractError, handleContractError } from "../lib/ContractError.js";
 import { writeRateLimiter } from "../middleware/rateLimiter.js";
 import { isValidStellarAddress } from "../middleware/addressValidator.js";
 
@@ -145,16 +145,7 @@ router.get("/services", async (req, res) => {
 
     res.json({ services, count: services.length });
   } catch (err) {
-    if (err instanceof ContractError) {
-      if (err.code === "SIMULATION_FAILED") {
-        return res.status(400).json({ error: err.message, code: err.code });
-      }
-      if (err.code === "TRANSACTION_TIMEOUT") {
-        return res.status(504).json({ error: err.message, code: err.code });
-      }
-    }
-    logger.error({ err }, "GET /api/services failed");
-    res.status(500).json({ error: "Failed to fetch services", code: "FETCH_ERROR" });
+    return handleContractError(err, res, "Failed to fetch services", "FETCH_ERROR");
   }
 });
 
@@ -192,8 +183,7 @@ router.get("/services/:id", async (req, res) => {
       ledgerResult.status === "fulfilled" ? ledgerResult.value : null;
     res.json(annotateTtlWarning(service, currentLedger));
   } catch (err) {
-    logger.error({ err }, "GET /api/services/:id failed");
-    res.status(500).json({ error: "Failed to fetch service", code: "FETCH_ERROR" });
+    return handleContractError(err, res, "Failed to fetch service", "FETCH_ERROR");
   }
 });
 
@@ -229,29 +219,7 @@ router.post("/services/:id/deactivate", writeRateLimiter(), async (req, res) => 
     logger.info({ id: parsedId, providerAddress }, "Built unsigned deactivation tx");
     res.json(prepared);
   } catch (err) {
-    if (err instanceof ContractError) {
-      if (err.code === "SERVICE_NOT_FOUND") {
-        return res.status(404).json({ error: err.message, code: err.code });
-      }
-      if (err.code === "SERVICE_READ_FAILED") {
-        return res.status(502).json({ error: err.message, code: err.code });
-      }
-      if (err.code === "PROVIDER_MISMATCH") {
-        return res.status(403).json({ error: err.message, code: err.code });
-      }
-      if (err.code === "ALREADY_INACTIVE") {
-        return res.status(409).json({ error: err.message, code: err.code });
-      }
-      if (err.code === "TRANSACTION_TIMEOUT") {
-        return res.status(504).json({ error: err.message, code: err.code });
-      }
-      return res.status(400).json({ error: err.message, code: err.code });
-    }
-    logger.error({ err, id: parsedId }, "POST /api/services/:id/deactivate failed");
-    res.status(500).json({
-      error: "Failed to deactivate service",
-      code: "DEACTIVATE_ERROR",
-    });
+    return handleContractError(err, res, "Failed to deactivate service", "DEACTIVATE_ERROR");
   }
 });
 
@@ -273,8 +241,7 @@ router.get("/services/:id/history", async (req, res) => {
     const history = getReputationHistory(id);
     res.json({ history });
   } catch (err) {
-    logger.error({ err, id }, "GET /api/services/:id/history failed");
-    res.status(500).json({ error: "Failed to fetch reputation history", code: "FETCH_ERROR" });
+    return handleContractError(err, res, "Failed to fetch reputation history", "FETCH_ERROR");
   }
 });
 
@@ -297,8 +264,7 @@ router.get("/stats", async (req, res) => {
 
     res.json({ totalServices, categories, latestService });
   } catch (err) {
-    logger.error({ err }, "GET /api/stats failed");
-    res.status(500).json({ error: "Failed to fetch stats", code: "FETCH_ERROR" });
+    return handleContractError(err, res, "Failed to fetch stats", "FETCH_ERROR");
   }
 });
 
@@ -335,16 +301,7 @@ router.get("/registry/by-provider/:address", async (req, res) => {
 
     res.json({ services, count: services.length });
   } catch (err) {
-    if (err instanceof ContractError) {
-      if (err.code === "SIMULATION_FAILED") {
-        return res.status(400).json({ error: err.message, code: err.code });
-      }
-      if (err.code === "TRANSACTION_TIMEOUT") {
-        return res.status(504).json({ error: err.message, code: err.code });
-      }
-    }
-    logger.error({ err, address: req.params.address }, "GET /api/registry/by-provider/:address failed");
-    res.status(500).json({ error: "Failed to fetch services", code: "FETCH_ERROR" });
+    return handleContractError(err, res, "Failed to fetch services", "FETCH_ERROR");
   }
 });
 
@@ -398,12 +355,7 @@ router.post("/registry/prepare-register", writeRateLimiter(), async (req, res) =
     logger.info({ providerAddress, endpoint, category }, "Built unsigned registry registration tx");
     res.json(prepared);
   } catch (err) {
-    if (err instanceof ContractError) {
-      const status = err.code === "TRANSACTION_TIMEOUT" ? 504 : err.code === "DUPLICATE_SERVICE" ? 409 : 400;
-      return res.status(status).json({ error: err.message, code: err.code });
-    }
-    logger.error({ err }, "POST /api/registry/prepare-register failed");
-    res.status(500).json({ error: "Failed to build transaction", code: "BUILD_TX_ERROR" });
+    return handleContractError(err, res, "Failed to build transaction", "BUILD_TX_ERROR");
   }
 });
 
@@ -423,12 +375,7 @@ router.post("/registry/prepare-deactivate", writeRateLimiter(), async (req, res)
     logger.info({ providerAddress, id: parsedId }, "Built unsigned registry deactivation tx");
     res.json(prepared);
   } catch (err) {
-    if (err instanceof ContractError) {
-      const status = err.code === "TRANSACTION_TIMEOUT" ? 504 : 400;
-      return res.status(status).json({ error: err.message, code: err.code });
-    }
-    logger.error({ err }, "POST /api/registry/prepare-deactivate failed");
-    res.status(500).json({ error: "Failed to build transaction", code: "BUILD_TX_ERROR" });
+    return handleContractError(err, res, "Failed to build transaction", "BUILD_TX_ERROR");
   }
 });
 
@@ -447,12 +394,7 @@ router.post("/registry/submit-signed-tx", writeRateLimiter(), async (req, res) =
     logger.info({ hash: result.hash, id: result.id }, "Submitted wallet-signed registry tx");
     res.json({ success: true, ...result });
   } catch (err) {
-    if (err instanceof ContractError) {
-      const status = err.code === "TRANSACTION_TIMEOUT" ? 504 : 400;
-      return res.status(status).json({ error: err.message, code: err.code });
-    }
-    logger.error({ err }, "POST /api/registry/submit-signed-tx failed");
-    res.status(500).json({ error: "Failed to submit transaction", code: "SUBMIT_TX_ERROR" });
+    return handleContractError(err, res, "Failed to submit transaction", "SUBMIT_TX_ERROR");
   }
 });
 
@@ -495,19 +437,7 @@ router.post("/reputation/:id", writeRateLimiter(), async (req, res) => {
     const newReputation = await updateReputation(id, positive, agent);
     res.json({ success: true, newReputation });
   } catch (err) {
-    // SIMULATION_FAILED covers on-chain rejections such as the vote cooldown
-    // or an unregistered agent — surface it as an actionable 400.
-    if (err instanceof ContractError) {
-      if (err.code === "AGENT_NOT_ALLOWED") {
-        return res.status(403).json({ error: err.message, code: err.code });
-      }
-      if (err.code === "TRANSACTION_TIMEOUT") {
-        return res.status(504).json({ error: err.message, code: err.code });
-      }
-      return res.status(400).json({ error: err.message, code: err.code });
-    }
-    logger.error({ err, id }, "POST /api/reputation/:id failed");
-    res.status(500).json({ error: "Failed to update reputation", code: "UPDATE_ERROR" });
+    return handleContractError(err, res, "Failed to update reputation", "UPDATE_ERROR");
   }
 });
 

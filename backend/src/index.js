@@ -16,6 +16,7 @@ import {
   resumePendingTransactions,
 } from "./lib/contract.js";
 import requestIdMiddleware from "./lib/requestId.js";
+import { ContractError, handleContractError } from "./lib/ContractError.js";
 import registryRouter from "./routes/registry.js";
 import servicesRouter from "./routes/services.js";
 import demoRouter from "./routes/demo.js";
@@ -121,18 +122,25 @@ if (enableDemoRoutes) {
 
 app.use((err, req, res, _next) => {
   if (err.type === "entity.too.large") {
-    req.log.warn({ expected: config.jsonBodyLimit }, "Request body too large");
+    const log = req.log || logger;
+    log.warn({ expected: config.jsonBodyLimit }, "Request body too large");
     return res.status(413).json({
       error: `Request body too large. Maximum size is ${config.jsonBodyLimit}.`,
       code: "PAYLOAD_TOO_LARGE",
     });
   }
 
+  if (err instanceof ContractError) {
+    return handleContractError(err, res);
+  }
+
+  const log = req.log || logger;
+  log.error({ err, stack: err?.stack, cause: err?.cause }, "Unhandled internal error in request");
 
   res.status(500).json({
     error: "Internal server error",
     code: "INTERNAL_ERROR",
-    requestId: _req.requestId,
+    ...(req.requestId && { requestId: req.requestId }),
   });
 });
 let server;

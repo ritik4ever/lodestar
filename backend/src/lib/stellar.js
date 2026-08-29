@@ -2,7 +2,7 @@ import pkg from "@stellar/stellar-sdk";
 const { rpc, Networks, Keypair } = pkg;
 import config from "../config.js";
 import logger from "./logger.js";
-import { RpcThrottledError } from "./contractErrors.js";
+import { RpcThrottledError, RpcError } from "./contractErrors.js";
 
 let _server = null;
 
@@ -65,7 +65,7 @@ function backoffDelay(attempt, baseDelayMs, maxDelayMs) {
  * @param {number} baseDelayMs
  * @param {number} maxDelayMs
  * @returns {Promise<any>}
- * @throws {RpcThrottledError} when the retry budget is exhausted
+ * @throws {RpcThrottledError|RpcError} when the retry budget is exhausted or non-retryable failure occurs
  */
 async function withRpcRetry(fn, methodName, maxRetries, baseDelayMs, maxDelayMs) {
   let lastError;
@@ -77,10 +77,14 @@ async function withRpcRetry(fn, methodName, maxRetries, baseDelayMs, maxDelayMs)
       lastError = err;
 
       if (!isRetryableRpcError(err) || attempt >= maxRetries) {
-        // Re-throw non-retryable errors immediately — only wrap exhausted
-        // retries in RpcThrottledError.
         if (!isRetryableRpcError(err)) {
-          throw err;
+          if (err?.name === 'ContractError' || err?.name === 'RpcError' || err?.name === 'RpcThrottledError') {
+            throw err;
+          }
+          throw new RpcError(`RPC call '${methodName}' failed: ${err.message ?? String(err)}`, {
+            operation: `rpc.${methodName}`,
+            cause: err,
+          });
         }
         break;
       }
@@ -112,8 +116,11 @@ async function withRpcRetry(fn, methodName, maxRetries, baseDelayMs, maxDelayMs)
 
   throw new RpcThrottledError(
     `RPC call '${methodName}' failed after ${maxRetries + 1} attempt(s): ${lastError?.message ?? String(lastError)}`,
-    maxRetries + 1,
-    lastError,
+    {
+      operation: `rpc.${methodName}`,
+      attempts: maxRetries + 1,
+      cause: lastError,
+    },
   );
 }
 
