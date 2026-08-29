@@ -85,6 +85,9 @@ describe('GET /api/services', () => {
 
     const res = await request(app).get('/api/services');
 
+    console.log("status:", res.status);
+    console.log("body:", res.body);
+
     expect(res.status).toBe(200);
     expect(res.body.services).toHaveLength(2);
     expect(res.body.count).toBe(2);
@@ -1042,6 +1045,9 @@ describe('GET /api/services/:id — ttl_warning annotation', () => {
     mockGetCurrentLedgerSequence.mockRejectedValue(new Error('timeout'));
 
     const res = await request(app).get('/api/services/1');
+
+    console.log("STATUS:", res.status);
+    console.log("BODY:", res.body);
 
     expect(res.status).toBe(200);
     expect('ttl_warning' in res.body).toBe(false);

@@ -212,6 +212,21 @@ The agent will:
 
 ---
 
+### Agent Persistent State
+
+The agent optionally stores local state in:
+
+agent/agent-state.json
+
+It contains:
+
+- score history
+- provider success/failure history
+- cumulative spend
+
+If the file is deleted or corrupted, the agent recreates it automatically and continues running.
+
+
 ## Agent Credit Scoring
 
 Lodestar ships a second Soroban contract that gives every AI agent a verifiable on-chain credit score.

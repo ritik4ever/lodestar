@@ -8,6 +8,7 @@ const { Keypair } = pkg;
 import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { createEd25519Signer } from '@x402/stellar';
 import { ExactStellarScheme } from '@x402/stellar/exact/client';
+import { getAgentState, saveAgentState } from "./state.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -119,7 +120,7 @@ export const EVENT = {
 // ── Credit scoring helpers ────────────────────────────────────────────────────
 
 let currentScore = null;
-
+let agentState = null;
 export async function ensureRegistered() {
   try {
     const res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}`);
@@ -134,6 +135,7 @@ export async function ensureRegistered() {
       const data = await res.json();
       const agent = data.agent ?? data;
       currentScore = agent.score;
+      agentState = getAgentState(AGENT_ADDRESS);
       const policy = data.policy;
       const dailyLimitUsdc = policy
         ? (Number(BigInt(policy.max_per_day_stroops)) / 10_000_000).toFixed(2)
@@ -163,6 +165,7 @@ export async function ensureRegistered() {
       });
       if (regRes.ok) {
         currentScore = 100;
+        agentState = getAgentState(AGENT_ADDRESS);
         logger.info(
           { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, score: 100, scoringEnabled: true },
           'Registered — starting score: 100'
@@ -217,6 +220,14 @@ async function recordOutcome(amountUsdc, success, serviceId) {
       const data = await res.json();
       const scoreBefore = currentScore;
       currentScore = data.newScore;
+      if (agentState?.providerHistory) {
+        agentState.scoreHistory.push({
+          timestamp: new Date().toISOString(),
+          score: currentScore,
+        });
+
+        saveAgentState(AGENT_ADDRESS, agentState);
+      }
       logger.info(
         { event: EVENT.SCORE_UPDATED, agentAddress: AGENT_ADDRESS, scoreBefore, scoreAfter: currentScore },
         'Score updated'
@@ -302,7 +313,12 @@ async function submitReputation(id, positive) {
 // Weighted random selection: higher reputation = proportionally more likely to be chosen.
 // Falls back to uniform random when all weights are zero.
 function selectWeighted(services) {
-  const weights = services.map(s => Math.max(0, s.reputation));
+  const history = agentState?.providerHistory ?? {};
+
+  const weights = services.map((s) => {
+    const failures = agentState?.providerHistory?.[s.id]?.failures ?? 0;
+    return Math.max(0, s.reputation / (1 + failures));
+  });
   const total = weights.reduce((sum, w) => sum + w, 0);
   if (total === 0) {
     return services[Math.floor(Math.random() * services.length)];
@@ -324,6 +340,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
   const taskStart = Date.now();
   logger.info({ event: EVENT.TASK_START, category, agentAddress: AGENT_ADDRESS }, 'Task started');
 
+  agentState = getAgentState(AGENT_ADDRESS);
   const services = await fetchServices(category);
 
   if (!services.length) {
@@ -334,7 +351,17 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
     return { success: false, priceUsdc: null };
   }
 
-  const eligible = services.filter(s => s.reputation >= minReputation);
+  const providerHistory = agentState?.providerHistory;
+
+  const eligible = services.filter((service) => {
+    if (service.reputation < minReputation) return false;
+
+    const history = providerHistory?.[service.id];
+
+    if (!history) return true;
+
+    return history.failures < 3;
+  });
   if (!eligible.length) {
     logger.error(
       { event: EVENT.TASK_START, category, servicesFound: services.length, minReputation },
@@ -414,6 +441,16 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
         'Payment failed — network error'
       );
       if (scoringEnabled) await recordOutcome(selected.price_usdc, false, selected.id);
+      if (agentState?.providerHistory) {
+        const history = agentState.providerHistory[selected.id] ?? {
+          successes: 0,
+          failures: 0,
+        };
+
+        history.failures++;
+        agentState.providerHistory[selected.id] = history;
+        saveAgentState(AGENT_ADDRESS, agentState);
+      }
       failed.add(selected.id);
       continue;
     }
@@ -434,6 +471,16 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
       if (scoringEnabled) await recordOutcome(selected.price_usdc, false, selected.id);
       // Payment settled but service returned bad data — penalise service reputation.
       await submitReputation(selected.id, false);
+      if (agentState?.providerHistory) {
+        const history = agentState.providerHistory[selected.id] ?? {
+          successes: 0,
+          failures: 0,
+        };
+
+        history.failures++;
+        agentState.providerHistory[selected.id] = history;
+        saveAgentState(AGENT_ADDRESS, agentState);
+      }
       failed.add(selected.id);
       continue;
     }
@@ -457,6 +504,20 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
     );
 
     await submitReputation(selected.id, true);
+
+    if (agentState?.providerHistory) {
+      const history = agentState.providerHistory[selected.id] ?? {
+        successes: 0,
+        failures: 0,
+      };
+
+      history.successes++;
+      agentState.providerHistory[selected.id] = history;
+
+      agentState.cumulativeSpend += parseFloat(selected.price_usdc);
+
+      saveAgentState(AGENT_ADDRESS, agentState);
+    }
 
     return { success: true, priceUsdc: selected.price_usdc };
   }

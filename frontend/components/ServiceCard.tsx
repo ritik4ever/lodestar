@@ -61,9 +61,10 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
     }
   }
 
-  const ledger = service.registered_at != null
-    ? `Ledger #${Number(service.registered_at).toLocaleString()}`
-    : null;
+  const ledger =
+  service.registered_at != null
+    ? `Ledger #${service.registered_at.toLocaleString()}`
+    : "Ledger unavailable";
 
   return (
     <div className="card p-6 flex flex-col gap-4 fade-in">

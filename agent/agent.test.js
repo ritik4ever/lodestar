@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-
+import fs from 'fs';
 // ── Hoisted mock refs (available inside vi.mock factories) ────────────────────
 
 const { logInfo, logWarn, logError, logDebug } = vi.hoisted(() => ({
@@ -92,8 +92,18 @@ function buildFetch({ services = [MOCK_SERVICE], canSpend = true, endpointOk = t
 beforeEach(() => {
   vi.clearAllMocks();
   global.fetch = buildFetch();
-});
 
+  fs.writeFileSync(
+    'agent-state.json',
+    JSON.stringify({
+      GAGENTADDRESSMOCK000000000000000000000000000000000000000: {
+        scoreHistory: [],
+        providerHistory: {},
+        cumulativeSpend: 0,
+      },
+    })
+  );
+});
 describe('runTask — happy path', () => {
   it('logs task_start with category field', async () => {
     await runTask('weather', (ep) => ep, true, mockHttpClient);
