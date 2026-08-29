@@ -1,0 +1,12 @@
+{
+  "marginPercent": 0.2,
+  "routes": {
+    "/agents": 170000,
+    "/agents/[address]": 220000,
+    "/agents/register": 200000,
+    "/demo": 180000,
+    "/register": 220000,
+    "/registry": 170000,
+    "/services/[id]": 180000
+  }
+}
