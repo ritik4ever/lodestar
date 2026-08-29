@@ -19,6 +19,17 @@ const SCORE_SUCCESS: i32 = 10;
 const SCORE_FAILURE: i32 = -25;
 const FLAG_PENALTY: i32 = -200;
 
+// ── Scoring config return type ────────────────────────────────────────────────
+#[contracttype]
+#[derive(Clone)]
+pub struct ScoringConfig {
+    pub initial_score: i32,
+    pub score_success: i32,
+    pub score_failure: i32,
+    pub flag_penalty: i32,
+    pub max_score: i32,
+}
+
 // ── Storage keys ─────────────────────────────────────────────────────────────
 #[contracttype]
 #[derive(Clone)]
@@ -562,6 +573,17 @@ impl LodestarAgents {
             .persistent()
             .get(&DataKey::AgentCount)
             .unwrap_or(0u64)
+    }
+
+    // Return the scoring constants so integrators can read them without hardcoding
+    pub fn get_scoring_config(_env: Env) -> ScoringConfig {
+        ScoringConfig {
+            initial_score: INITIAL_SCORE,
+            score_success: SCORE_SUCCESS,
+            score_failure: SCORE_FAILURE,
+            flag_penalty: FLAG_PENALTY,
+            max_score: MAX_SCORE,
+        }
     }
 
     // Update spending policy for an agent (owner only)
