@@ -11,9 +11,14 @@ import { ExactStellarScheme } from '@x402/stellar/exact/client';
 import { buildRunSummary, writeRunSummary } from './runSummary.js';
 import { stroopsToUsdcDisplay } from '../packages/stroops/index.js';
 
-// ── Config ────────────────────────────────────────────────────────────────────
+// ── Config ────────────────────────────────────────────────────────────────
+
+const AGENT_DRY_RUN        = process.env.AGENT_DRY_RUN === '1' || process.env.AGENT_DRY_RUN === 'true';
 
 function loadSecret() {
+  if (AGENT_DRY_RUN) {
+    return 'dry-run-placeholder';
+  }
   const envSecret = process.env.AGENT_STELLAR_SECRET;
   const filePath  = process.env.AGENT_STELLAR_SECRET_FILE;
 
@@ -71,10 +76,14 @@ const ALLOWED_CATS         = process.env.AGENT_ALLOWED_CATEGORIES
   : ['weather', 'search'];
 
 let agentKeypair;
-try {
-  agentKeypair = Keypair.fromSecret(AGENT_SECRET);
-} catch {
-  throw new Error(`Invalid AGENT_STELLAR_SECRET: unable to parse secret key`);
+if (AGENT_DRY_RUN) {
+  agentKeypair = { publicKey: () => 'GDRYRUNPLACEHOLDER000000000000000000000000000000000000000000' };
+} else {
+  try {
+    agentKeypair = Keypair.fromSecret(AGENT_SECRET);
+  } catch {
+    throw new Error(`Invalid AGENT_STELLAR_SECRET: unable to parse secret key`);
+  }
 }
 const AGENT_ADDRESS = agentKeypair.publicKey();
 
@@ -231,17 +240,16 @@ async function recordOutcome(amountUsdc, success, serviceId) {
 
 // ── x402 client ───────────────────────────────────────────────────────────────
 
-const httpClient = buildHttpClient();
-
-export function dispose() {
-  logger.info('Shutting down Lodestar Agent');
-}
-
-// USDC <-> stroop conversion comes from the shared package so the agent and
-// the backend cannot disagree on rounding (#853). The previous local copies
-// used floating-point math and were removed.
+let httpClient;
 
 function buildHttpClient() {
+  if (AGENT_DRY_RUN) {
+    // Mock client for dry-run: no actual signing/payment needed
+    return {
+      encodePaymentSignatureHeader: () => ({}),
+      fetch: async (url, init = {}) => fetchWithTimeout(url, init),
+    };
+  }
   // Re-read the secret for the x402 signer since the module-level reference
   // has already been zeroed. loadSecret() re-reads from the env var or file.
   const secretForSigner = loadSecret();
@@ -269,6 +277,12 @@ function buildHttpClient() {
   };
 
   return httpClient;
+}
+
+httpClient = buildHttpClient();
+
+export function dispose() {
+  logger.info('Shutting down Lodestar Agent');
 }
 
 // ── Registry helpers ──────────────────────────────────────────────────────────
@@ -313,12 +327,12 @@ function selectWeighted(services) {
 
 // ── Agent task ────────────────────────────────────────────────────────────────
 
-export async function runTask(category, buildUrl, scoringEnabled, client = httpClient) {
+export async function runTask(category, buildUrl, scoringEnabled, client = httpClient, dryRun = AGENT_DRY_RUN) {
   const minReputation = parseInt(process.env.AGENT_MIN_SERVICE_REPUTATION ?? '0', 10);
   const maxRetries    = parseInt(process.env.AGENT_MAX_SERVICE_RETRIES    ?? '3', 10);
 
   const taskStart = Date.now();
-  logger.info({ event: EVENT.TASK_START, category, agentAddress: AGENT_ADDRESS }, 'Task started');
+  logger.info({ event: EVENT.TASK_START, category, agentAddress: AGENT_ADDRESS, dryRun }, 'Task started');
 
   const services = await fetchServices(category);
 
@@ -390,6 +404,44 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
         { event: EVENT.SPEND_CHECK_PASSED, category, serviceId: selected.id, serviceName: selected.name, priceUsdc: selected.price_usdc },
         'Spending policy check passed'
       );
+    }
+
+    // Dry-run mode: log the plan and exit without submitting any on-chain transaction
+    if (dryRun) {
+      const endpointUrl = buildUrl(selected.endpoint);
+      logger.info(
+        {
+          event: 'dry_run_plan',
+          category,
+          serviceId: selected.id,
+          serviceName: selected.name,
+          priceUsdc: selected.price_usdc,
+          endpointUrl,
+          servicesFound: services.length,
+          attempt,
+        },
+        'DRY RUN — would pay for service'
+      );
+      return {
+        success: true,
+        priceUsdc: selected.price_usdc,
+        txHash: '(dry-run)',
+        servicesDiscovered: services.length,
+        servicesEligible: eligible.length,
+        attempts: attempt,
+        scoreAfter: currentScore,
+        durationMs: Date.now() - taskStart,
+        dryRun: true,
+        selection: {
+          serviceId: selected.id,
+          serviceName: selected.name,
+          reputation: selected.reputation,
+          priceUsdc: selected.price_usdc,
+          strategy: 'reputation_weighted_random',
+          candidatesConsidered: candidates.length,
+          minReputation,
+        },
+      };
     }
 
     const endpointUrl = buildUrl(selected.endpoint);
@@ -549,8 +601,8 @@ async function completeShutdown(success, unresolved) {
 export async function main() {
   const runStart = Date.now();
   logger.info(
-    { event: EVENT.AGENT_START, agentAddress: AGENT_ADDRESS, agentName: AGENT_NAME },
-    'Lodestar Agent starting'
+    { event: EVENT.AGENT_START, agentAddress: AGENT_ADDRESS, agentName: AGENT_NAME, dryRun: AGENT_DRY_RUN },
+    AGENT_DRY_RUN ? 'Lodestar Agent starting (DRY RUN MODE)' : 'Lodestar Agent starting'
   );
 
   const scoringEnabled = await ensureRegistered();
@@ -575,11 +627,13 @@ export async function main() {
       continue;
     }
 
-    const result = await runTask(category, buildUrl, scoringEnabled, httpClient);
+    const result = await runTask(category, buildUrl, scoringEnabled, httpClient, AGENT_DRY_RUN);
     taskResults.push({ category, ...result });
     if (result.success) {
       successCount++;
-      totalUsdcSpent += parseFloat(result.priceUsdc ?? '0');
+      if (!result.dryRun) {
+        totalUsdcSpent += parseFloat(result.priceUsdc ?? '0');
+      }
     } else {
       failCount++;
       if (result._unresolved) {
