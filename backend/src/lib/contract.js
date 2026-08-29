@@ -381,7 +381,7 @@ export async function listServices({ category, offset = 0, limit = 20 } = {}) {
       description: item.description,
       endpoint: item.endpoint,
       price_usdc: item.price_usdc,
-      pay_to: item.pay_to,
+      pay_to: item.pay_to?.toString() ?? item.pay_to,
       category: item.category,
       provider: item.provider?.toString() ?? item.provider,
       reputation: Number(item.reputation),
@@ -407,7 +407,7 @@ export async function getService(id) {
       description: native.description,
       endpoint: native.endpoint,
       price_usdc: native.price_usdc,
-      pay_to: native.pay_to,
+      pay_to: native.pay_to?.toString() ?? native.pay_to,
       category: native.category,
       provider: native.provider?.toString() ?? native.provider,
       reputation: Number(native.reputation),
@@ -545,7 +545,7 @@ export async function registerServiceOnChain(
       nativeToScVal(description, { type: 'string' }),
       nativeToScVal(endpoint, { type: 'string' }),
       nativeToScVal(priceUsdc, { type: 'string' }),
-      nativeToScVal(payToAddress, { type: 'string' }),
+      nativeToScVal(Address.fromString(payToAddress), { type: 'address' }),
       nativeToScVal(category, { type: 'string' })
     );
 
@@ -639,7 +639,7 @@ export async function buildUnsignedRegistryTx(action, providerAddress, params = 
       nativeToScVal(params.description, { type: 'string' }),
       nativeToScVal(params.endpoint, { type: 'string' }),
       nativeToScVal(String(params.priceUsdc), { type: 'string' }),
-      nativeToScVal(params.payTo || config.x402.payTo, { type: 'string' }),
+      nativeToScVal(Address.fromString(params.payTo || config.x402.payTo), { type: 'address' }),
       nativeToScVal(params.category, { type: 'string' })
     );
 

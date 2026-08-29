@@ -36,13 +36,14 @@ fn deploy_both(env: &Env) -> (LodestarRegistryClient<'static>, LodestarAgentsCli
 /// Register a service so there is something to vote on.
 fn register_service(env: &Env, registry: &LodestarRegistryClient) -> u64 {
     let provider = Address::generate(env);
+    let pay_to = Address::generate(env);
     registry.register_service(
         &provider,
         &String::from_str(env, "Weather API"),
         &String::from_str(env, "Weather data for the integration test"),
         &String::from_str(env, "https://example.test/weather"),
         &String::from_str(env, "0.001"),
-        &String::from_str(env, "GTESTPAYTOADDRESS"),
+        &pay_to,
         &String::from_str(env, "weather"),
     )
 }
@@ -115,7 +116,7 @@ fn a_callee_panic_propagates_and_leaves_registry_state_untouched() {
         &String::from_str(&env, "A second service registered during the test"),
         &String::from_str(&env, "https://example.test/x"),
         &String::from_str(&env, "0.002"),
-        &String::from_str(&env, "GTESTPAYTOADDRESS"),
+        &Address::generate(&env),
         &String::from_str(&env, "weather"),
     );
     assert!(result.is_ok(), "sanity: registry itself still works");
