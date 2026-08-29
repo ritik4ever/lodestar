@@ -179,7 +179,11 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
   logRpcCall('simulateTransaction', Date.now() - simStart);
 
   if (rpc.Api.isSimulationError(simResult)) {
-    throw new SimulationError(`Simulation failed: ${simResult.error}`, simResult.error);
+    throw new SimulationError(`Simulation failed: ${simResult.error}`, {
+      operation: '_simulateAndSubmit.simulateTransaction',
+      details: simResult.error,
+      cause: simResult,
+    });
   }
 
   const preparedTx = assembleTransactionForSubmit(tx, simResult).build();
@@ -209,7 +213,15 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
       logger.warn({ retryCount }, 'txBAD_SEQ encountered, retrying transaction');
       return _simulateAndSubmit(operation, signer, retryCount + 1);
     }
-    throw new TransactionFailedError(`Transaction failed: ${JSON.stringify(sendResult.errorResult || sendResult)}`, sendResult.hash, sendResult.errorResult || sendResult);
+    throw new TransactionFailedError(
+      `Transaction failed: ${typeof sendResult.errorResult === 'string' ? sendResult.errorResult : (sendResult.errorResult?.message || 'Transaction submission rejected')}`,
+      {
+        operation: '_simulateAndSubmit.sendTransaction',
+        hash: sendResult.hash,
+        details: sendResult.errorResult || sendResult,
+        cause: sendResult,
+      },
+    );
   }
 
   const txHash = sendResult.hash;
@@ -228,21 +240,33 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
 
   if (!getResult || getResult.status === 'NOT_FOUND') {
     // Leave in pendingTransactions — the tx may still confirm on-chain
-    throw new TransactionTimeoutError(`Transaction not confirmed after polling: ${sendResult.hash}`, sendResult.hash);
+    throw new TransactionTimeoutError(`Transaction not confirmed after polling: ${sendResult.hash}`, {
+      operation: '_simulateAndSubmit.getTransaction',
+      hash: sendResult.hash,
+    });
   }
 
   // Transaction confirmed (SUCCESS or FAILED) — stop tracking
   removePendingTransaction(txHash);
 
   if (getResult.status === 'FAILED') {
-    throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, sendResult.hash, getResult);
+    throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, {
+      operation: '_simulateAndSubmit.getTransaction',
+      hash: sendResult.hash,
+      details: getResult,
+      cause: getResult,
+    });
   }
 
   if (getResult.returnValue) {
     try {
       getResult.nativeReturnValue = scValToNative(getResult.returnValue);
     } catch (err) {
-      throw new ReturnValueParseError(`Transaction succeeded but return value could not be parsed: ${sendResult.hash}`, sendResult.hash, err);
+      throw new ReturnValueParseError(`Transaction succeeded but return value could not be parsed: ${sendResult.hash}`, {
+        operation: '_simulateAndSubmit.parseReturnValue',
+        hash: sendResult.hash,
+        cause: err,
+      });
     }
   }
 
@@ -290,7 +314,11 @@ async function buildUnsignedTx(operation) {
 
   const simResult = await server.simulateTransaction(tx);
   if (rpc.Api.isSimulationError(simResult)) {
-    throw new ContractError(`Simulation failed: ${simResult.error}`, 'SIMULATION_FAILED');
+    throw new SimulationError(`Simulation failed: ${simResult.error}`, {
+      operation: 'buildUnsignedTx.simulateTransaction',
+      details: simResult.error,
+      cause: simResult,
+    });
   }
 
   return assembleTransactionForSubmit(tx, simResult).build().toXDR();
@@ -316,7 +344,11 @@ async function simulateRead(operation) {
   logRpcCall('simulateTransaction', Date.now() - simStart);
 
   if (rpc.Api.isSimulationError(simResult)) {
-    throw new ContractError(`Simulation failed: ${simResult.error}`, 'SIMULATION_FAILED');
+    throw new SimulationError(`Simulation failed: ${simResult.error}`, {
+      operation: 'simulateRead.simulateTransaction',
+      details: simResult.error,
+      cause: simResult,
+    });
   }
 
   return simResult.result?.retval;
@@ -345,7 +377,11 @@ export async function simulateReadBatch(operations) {
     logRpcCall('simulateTransaction', Date.now() - simStart);
 
     if (rpc.Api.isSimulationError(simResult)) {
-      throw new ContractError(`Batch simulation failed: ${simResult.error}`, 'SIMULATION_FAILED');
+      throw new SimulationError(`Batch simulation failed: ${simResult.error}`, {
+        operation: 'simulateReadBatch.simulateTransaction',
+        details: simResult.error,
+        cause: simResult,
+      });
     }
 
     results.push(simResult.result?.retval);
@@ -1145,7 +1181,15 @@ async function submitSignedTx(signedXdr) {
   const sendResult = await server.sendTransaction(tx);
   logRpcCall('sendTransaction', Date.now() - sendStart);
   if (sendResult.status === 'ERROR') {
-    throw new TransactionFailedError(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`, sendResult.hash, sendResult.errorResult);
+    throw new TransactionFailedError(
+      `Transaction failed: ${typeof sendResult.errorResult === 'string' ? sendResult.errorResult : (sendResult.errorResult?.message || 'Transaction submission rejected')}`,
+      {
+        operation: 'submitSignedTx.sendTransaction',
+        hash: sendResult.hash,
+        details: sendResult.errorResult,
+        cause: sendResult,
+      },
+    );
   }
 
   const signedTxHash = sendResult.hash;
@@ -1163,13 +1207,21 @@ async function submitSignedTx(signedXdr) {
   }
 
   if (!getResult || getResult.status === 'NOT_FOUND') {
-    throw new TransactionTimeoutError(`Transaction not confirmed: ${sendResult.hash}`, sendResult.hash);
+    throw new TransactionTimeoutError(`Transaction not confirmed: ${sendResult.hash}`, {
+      operation: 'submitSignedTx.getTransaction',
+      hash: sendResult.hash,
+    });
   }
 
   removePendingTransaction(signedTxHash);
 
   if (getResult.status === 'FAILED') {
-    throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, sendResult.hash, getResult);
+    throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, {
+      operation: 'submitSignedTx.getTransaction',
+      hash: sendResult.hash,
+      details: getResult,
+      cause: getResult,
+    });
   }
 
   let nativeReturnValue;
@@ -1177,7 +1229,11 @@ async function submitSignedTx(signedXdr) {
     try {
       nativeReturnValue = scValToNative(getResult.returnValue);
     } catch (err) {
-      throw new ReturnValueParseError(`Transaction succeeded but return value could not be parsed: ${sendResult.hash}`, sendResult.hash, err);
+      throw new ReturnValueParseError(`Transaction succeeded but return value could not be parsed: ${sendResult.hash}`, {
+        operation: 'submitSignedTx.parseReturnValue',
+        hash: sendResult.hash,
+        cause: err,
+      });
     }
   }
 

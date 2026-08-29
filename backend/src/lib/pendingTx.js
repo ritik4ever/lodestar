@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { getStellarServer } from './stellar.js';
 import logger from './logger.js';
+import { StorageError, RpcError } from './contractErrors.js';
 
 // ── Pending Transactions Registry ──────────────────────────────────────────────
 //
@@ -65,11 +66,25 @@ export function dumpPendingTransactions() {
   try {
     writeFileSync(PENDING_TRANSACTIONS_FILE, JSON.stringify(entries, null, 2), 'utf-8');
     logger.warn(
-      { count: entries.length, file: PENDING_TRANSACTIONS_FILE },
+      { count: entries.length, file: PENDING_TRANSACTIONS_FILE, operation: 'dumpPendingTransactions' },
       'Dumped pending transactions to file',
     );
   } catch (err) {
-    logger.error({ err }, 'Failed to dump pending transactions');
+    const wrappedErr = new StorageError('Failed to dump pending transactions to disk', {
+      operation: 'dumpPendingTransactions',
+      safeInputs: { count: entries.length, file: PENDING_TRANSACTIONS_FILE },
+      cause: err,
+    });
+    logger.error(
+      {
+        errName: wrappedErr.name,
+        code: wrappedErr.code,
+        operation: wrappedErr.operation,
+        safeInputs: wrappedErr.safeInputs,
+        cause: err.message,
+      },
+      'Failed to dump pending transactions',
+    );
   }
 }
 
@@ -85,14 +100,22 @@ export async function resumePendingTransactions() {
     if (!existsSync(PENDING_TRANSACTIONS_FILE)) return;
     const data = readFileSync(PENDING_TRANSACTIONS_FILE, 'utf-8');
     entries = JSON.parse(data);
-  } catch {
+  } catch (err) {
+    logger.warn(
+      {
+        operation: 'resumePendingTransactions.readFile',
+        safeInputs: { file: PENDING_TRANSACTIONS_FILE },
+        cause: err.message,
+      },
+      'Could not read pending transactions file on resume',
+    );
     return;
   }
 
   if (!Array.isArray(entries) || entries.length === 0) return;
 
   logger.warn(
-    { count: entries.length, file: PENDING_TRANSACTIONS_FILE },
+    { count: entries.length, file: PENDING_TRANSACTIONS_FILE, operation: 'resumePendingTransactions' },
     'Resuming polling for unconfirmed transactions from previous run',
   );
 
@@ -101,15 +124,38 @@ export async function resumePendingTransactions() {
     try {
       const getResult = await server.getTransaction(entry.hash);
       if (getResult.status === 'SUCCESS') {
-        logger.info({ hash: entry.hash, operation: entry.operation }, 'Pending transaction from previous run confirmed SUCCESS');
+        logger.info(
+          { hash: entry.hash, operation: entry.operation },
+          'Pending transaction from previous run confirmed SUCCESS',
+        );
       } else if (getResult.status === 'FAILED') {
-        logger.warn({ hash: entry.hash, operation: entry.operation }, 'Pending transaction from previous run FAILED on-chain');
+        logger.warn(
+          { hash: entry.hash, operation: entry.operation },
+          'Pending transaction from previous run FAILED on-chain',
+        );
       } else {
         trackPendingTransaction(entry.hash, { method: entry.operation });
-        logger.warn({ hash: entry.hash, operation: entry.operation }, 'Pending transaction from previous run still unconfirmed, re-added to registry');
+        logger.warn(
+          { hash: entry.hash, operation: entry.operation },
+          'Pending transaction from previous run still unconfirmed, re-added to registry',
+        );
       }
     } catch (err) {
-      logger.error({ err, hash: entry.hash, operation: entry.operation }, 'Failed to check pending transaction from previous run');
+      const wrappedErr = new RpcError('Failed to poll pending transaction on resume', {
+        operation: 'resumePendingTransactions.getTransaction',
+        safeInputs: { hash: entry.hash, txOperation: entry.operation },
+        cause: err,
+      });
+      logger.error(
+        {
+          errName: wrappedErr.name,
+          code: wrappedErr.code,
+          operation: wrappedErr.operation,
+          safeInputs: wrappedErr.safeInputs,
+          cause: err.message,
+        },
+        'Failed to check pending transaction from previous run',
+      );
       trackPendingTransaction(entry.hash, { method: entry.operation });
     }
   }
@@ -118,8 +164,15 @@ export async function resumePendingTransactions() {
   // If the process is killed mid-resume the file remains for the next restart.
   try {
     unlinkSync(PENDING_TRANSACTIONS_FILE);
-  } catch {
-    // best-effort — file may already be gone
+  } catch (err) {
+    logger.warn(
+      {
+        operation: 'resumePendingTransactions.unlinkFile',
+        safeInputs: { file: PENDING_TRANSACTIONS_FILE },
+        cause: err?.message,
+      },
+      'Could not delete pending transactions file after resume',
+    );
   }
 
   if (pendingTransactions.size > 0) {
