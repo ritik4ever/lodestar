@@ -69,6 +69,14 @@ async function getCachedAgents() {
   return agentsCache;
 }
 
+function getAgentTier(score) {
+  if (score >= 1000) return 'elite';
+  if (score >= 900) return 'trusted';
+  if (score >= 600) return 'established';
+  if (score >= 300) return 'building';
+  return 'new';
+}
+
 function sortAgents(agents, sort) {
   return [...agents].sort((a, b) => {
     if (sort === 'score') return b.score - a.score;
@@ -97,9 +105,15 @@ router.get('/agents', requireAgentsContract, async (req, res) => {
     const sort = ['score', 'payments', 'newest'].includes(req.query.sort)
       ? req.query.sort
       : 'score';
+    const tier = ['all', 'new', 'building', 'established', 'trusted', 'elite'].includes(req.query.tier)
+      ? req.query.tier
+      : 'all';
 
     const allAgents = await getCachedAgents();
-    const sorted = sortAgents(allAgents, sort);
+    const filteredAgents = tier === 'all'
+      ? allAgents
+      : allAgents.filter((agent) => getAgentTier(agent.score) === tier);
+    const sorted = sortAgents(filteredAgents, sort);
     const total = sorted.length;
     const agents = sorted.slice(page * pageSize, (page + 1) * pageSize);
 

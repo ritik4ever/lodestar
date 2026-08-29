@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
-import type { AgentsResponse, AgentStats, AgentSortOption } from '@/lib/types';
+import type { AgentsResponse, AgentStats, AgentSortOption, ScoreTier } from '@/lib/types';
+import { TIER_LABELS } from '@/lib/types';
 import { fetchAgents, fetchAgentStats } from '@/lib/contract';
-import { sortAgents } from '@/lib/sort';
 import AgentCard from '@/components/AgentCard';
 import AgentCardSkeleton from '@/components/AgentCardSkeleton';
 import ScoreBadge from '@/components/ScoreBadge';
@@ -16,10 +16,19 @@ const SORTS: { label: string; value: AgentSortOption }[] = [
   { label: 'Newest', value: 'newest' },
 ];
 
+const TIER_FILTERS: { label: string; value: ScoreTier | 'all' }[] = [
+  { label: 'All', value: 'all' },
+  ...(['new', 'building', 'established', 'trusted', 'elite'] as const).map((value) => ({
+    label: TIER_LABELS[value],
+    value,
+  })),
+];
+
 import { PAGE_SIZE, PAGE_SIZE_OPTIONS } from '@/lib/pagination';
 
 export default function AgentsPage() {
   const [sort, setSort] = useState<AgentSortOption>('score');
+  const [activeTier, setActiveTier] = useState<ScoreTier | 'all'>('all');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZE);
 
@@ -33,8 +42,8 @@ export default function AgentsPage() {
     isValidating,
     mutate,
   } = useSWR<AgentsResponse>(
-    ['agents', page, pageSize, sort],
-    () => fetchAgents(page, pageSize, sort),
+    ['agents', page, pageSize, sort, activeTier],
+    () => fetchAgents(page, pageSize, sort, activeTier),
     { refreshInterval: 30_000, revalidateOnFocus: false, keepPreviousData: true }
   );
 
@@ -57,18 +66,22 @@ export default function AgentsPage() {
       : 'Failed to load'
     : null;
 
-  // Sort agents locally based on the selected sort option
-  const sortedAgents = sortAgents(agents, sort);
+  const hasAnyAgents = total > 0;
+  const statsAvailable = stats !== null;
+  const showNoAgentsState = !loading && !error && !hasAnyAgents && (!statsAvailable || (stats?.totalAgents ?? 0) === 0);
+  const showTierEmptyState = !loading && !error && !hasAnyAgents && statsAvailable && (stats?.totalAgents ?? 0) > 0;
 
-  // Clamp the page if the dataset shrank (e.g. agents removed between polls).
+  const visibleCount = total;
+
+  // Clamp the page if the filtered dataset shrank (e.g. agents removed or tier changed).
   useEffect(() => {
-    if (!data) return;
-    const maxPage = data.total > 0 ? Math.max(0, Math.ceil(data.total / pageSize) - 1) : 0;
+    const maxPage = visibleCount > 0 ? Math.max(0, Math.ceil(visibleCount / pageSize) - 1) : 0;
     if (page > maxPage) setPage(maxPage);
-  }, [data, page, pageSize]);
+  }, [page, pageSize, visibleCount]);
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const totalPages = Math.max(1, Math.ceil(visibleCount / pageSize));
   const pageStart = page * pageSize;
+  const pagedAgents = agents;
 
   function handleSortChange(next: AgentSortOption) {
     setSort(next);
@@ -77,6 +90,11 @@ export default function AgentsPage() {
 
   function handlePageSizeChange(next: number) {
     setPageSize(next);
+    setPage(0);
+  }
+
+  function handleTierChange(next: ScoreTier | 'all') {
+    setActiveTier(next);
     setPage(0);
   }
 
@@ -137,7 +155,7 @@ export default function AgentsPage() {
       )}
 
       {/* Score tier legend */}
-      <div className="card p-4 mb-8 flex flex-wrap gap-3 items-center">
+      <div className="card p-4 mb-6 flex flex-wrap gap-3 items-center">
         <span className="text-xs text-secondary font-medium uppercase tracking-widest mr-2">Score tiers</span>
         {([100, 450, 700, 950, 1000] as const).map((score) => (
           <ScoreBadge key={score} score={score} showScore={false} />
@@ -145,6 +163,24 @@ export default function AgentsPage() {
         <span className="text-xs text-secondary ml-auto">
           +10 per success · −25 per failure · cap 1000
         </span>
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-8" role="group" aria-label="Filter agents by score tier">
+        {TIER_FILTERS.map((tier) => (
+          <button
+            key={tier.value}
+            type="button"
+            onClick={() => handleTierChange(tier.value)}
+            aria-pressed={activeTier === tier.value}
+            className={`px-4 py-1.5 rounded-full text-sm border transition-colors focus:outline-none focus:ring-1 focus:ring-primary ${
+              activeTier === tier.value
+                ? 'bg-primary text-white border-primary'
+                : 'border-border text-secondary hover:border-primary hover:text-primary'
+            }`}
+          >
+            {tier.label}
+          </button>
+        ))}
       </div>
 
       {/* Content */}
@@ -175,7 +211,7 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {!loading && !error && total === 0 && (
+      {!loading && !error && showNoAgentsState && (
         <div className="card p-12 text-center">
           <p className="text-secondary text-sm mb-4">No agents registered yet.</p>
           <Link href="/agents/register" className="btn-primary px-5 py-2.5 text-sm">
@@ -184,10 +220,23 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {!loading && !error && total > 0 && (
+      {!loading && !error && showTierEmptyState && (
+        <div className="card p-12 text-center">
+          <p className="text-secondary text-sm mb-4">No agents match the selected tier.</p>
+          <button
+            type="button"
+            onClick={() => handleTierChange('all')}
+            className="btn-primary px-5 py-2.5 text-sm"
+          >
+            Show all agents
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && hasAnyAgents && total > 0 && (
         <div className={refreshing ? 'opacity-60 transition-opacity duration-150' : ''}>
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {sortedAgents.map((agent) => (
+            {pagedAgents.map((agent) => (
               <AgentCard key={agent.address} agent={agent} />
             ))}
           </div>
@@ -195,7 +244,7 @@ export default function AgentsPage() {
           {totalPages > 1 && (
             <div className="flex items-center justify-between mt-8 gap-4">
               <span className="text-sm text-secondary">
-                Showing {pageStart + 1}–{Math.min(pageStart + pageSize, total)} of {total}
+                Showing {pageStart + 1}–{Math.min(pageStart + pageSize, visibleCount)} of {visibleCount}
               </span>
               <div className="flex items-center gap-2">
                 <button
