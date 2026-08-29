@@ -121,6 +121,28 @@ Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. 
 
 ---
 
+## Quick Demo
+
+The fastest way to see the agent complete the full discover → pay → reputation loop from a clean clone:
+
+```sh
+git clone https://github.com/Stellar-Ecosystem/lodestar.git
+cd lodestar
+make demo AGENT_STELLAR_SECRET=<your-testnet-agent-secret>
+```
+
+`make demo` will:
+1. Start the backend and frontend with Docker Compose
+2. Wait for the backend `/healthz` endpoint to report healthy (no fixed sleep)
+3. Seed the four demo services into the on-chain registry (idempotent)
+4. Run the autonomous agent and print its output
+
+Run `make help` to see all available targets and configurable variables.
+
+> **Prerequisites**: Docker with Compose v2, Node.js ≥ 22, `curl`, and a funded Stellar testnet secret key for the agent (`AGENT_STELLAR_SECRET`).
+
+---
+
 ## Setup
 
 ### 1. Clone
