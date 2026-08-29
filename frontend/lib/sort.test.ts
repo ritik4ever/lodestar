@@ -1,6 +1,17 @@
 import { sortServices, sortAgents, sortServicesWithTieBreaker, sortAgentsWithTieBreaker } from './sort';
 import type { ServiceEntry, AgentEntry, SortOption, AgentSortOption } from './types';
 
+function makeAgent(overrides: Partial<AgentEntry> = {}): AgentEntry {
+  return {
+    address: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWFL',
+    score: 0,
+    total_payments: '0',
+    registered_at: '100',
+    active: true,
+    ...overrides,
+  };
+}
+
 function makeService(overrides: Partial<ServiceEntry> = {}): ServiceEntry {
   return {
     id: 1,
