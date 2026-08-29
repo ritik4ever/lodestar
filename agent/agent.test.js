@@ -331,6 +331,94 @@ describe('runTask — payment_failed on fetch throw', () => {
   });
 });
 
+describe('main — run spend cap', () => {
+  afterEach(() => {
+    delete process.env.AGENT_MAX_PER_RUN;
+  });
+
+  it('exports EVENT.RUN_CAP_EXCEEDED', () => {
+    expect(EVENT.RUN_CAP_EXCEEDED).toBe('run_cap_exceeded');
+  });
+
+  it('halts the run and emits run_cap_exceeded when cumulative spend reaches the cap', async () => {
+    process.env.AGENT_MAX_PER_RUN = '0.001';
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/agents/') && !url.includes('/can-spend') && !url.includes('/payment')) {
+        return Promise.resolve(makeResponse({
+          json: () => Promise.resolve({ agent: { score: 100 }, policy: null }),
+        }));
+      }
+      if (url.includes('/api/services')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ services: [MOCK_SERVICE] }) }));
+      }
+      if (url.includes('/can-spend')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ allowed: true, reason: 'OK' }) }));
+      }
+      if (url.includes('/payment')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ newScore: 105 }) }));
+      }
+      return Promise.resolve(makeResponse());
+    });
+
+    await main();
+
+    const capCall = logWarn.mock.calls.find(([f]) => f?.event === EVENT.RUN_CAP_EXCEEDED);
+    expect(capCall).toBeDefined();
+    expect(capCall[0]).toMatchObject({
+      event: 'run_cap_exceeded',
+      totalUsdcSpent: '0.001000',
+      maxPerRun: '0.001000',
+    });
+
+    const summaryCall = logInfo.mock.calls.find(([f]) => f?.event === EVENT.AGENT_COMPLETE);
+    expect(summaryCall).toBeDefined();
+    expect(summaryCall[0]).toMatchObject({
+      event: 'agent_complete',
+      totalTasks: 2,
+      successCount: 1,
+      failCount: 0,
+      totalUsdcSpent: '0.001000',
+    });
+  });
+
+  it('does not halt when cumulative spend remains below cap', async () => {
+    process.env.AGENT_MAX_PER_RUN = '5.00';
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/api/agents/') && !url.includes('/can-spend') && !url.includes('/payment')) {
+        return Promise.resolve(makeResponse({
+          json: () => Promise.resolve({ agent: { score: 100 }, policy: null }),
+        }));
+      }
+      if (url.includes('/api/services')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ services: [MOCK_SERVICE] }) }));
+      }
+      if (url.includes('/can-spend')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ allowed: true, reason: 'OK' }) }));
+      }
+      if (url.includes('/payment')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ newScore: 105 }) }));
+      }
+      return Promise.resolve(makeResponse());
+    });
+
+    await main();
+
+    const capCall = logWarn.mock.calls.find(([f]) => f?.event === EVENT.RUN_CAP_EXCEEDED);
+    expect(capCall).toBeUndefined();
+
+    const summaryCall = logInfo.mock.calls.find(([f]) => f?.event === EVENT.AGENT_COMPLETE);
+    expect(summaryCall).toBeDefined();
+    expect(summaryCall[0]).toMatchObject({
+      event: 'agent_complete',
+      totalTasks: 2,
+      successCount: 2,
+      failCount: 0,
+    });
+  });
+});
+
 describe('main — agent_complete summary', () => {
   it('logs agent_complete with all required summary fields', async () => {
     // ensureRegistered → already registered, score 100
