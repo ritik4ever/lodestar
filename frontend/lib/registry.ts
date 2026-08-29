@@ -12,10 +12,26 @@ export function filterServices(
     return services;
   }
 
-  return services.filter((service) => {
-    const haystacks = [service.name, service.description];
+  const matches = services.filter((service) => {
+    const haystacks = [
+      service.name,
+      service.description,
+      service.category,
+      service.endpoint,
+      service.provider,
+    ];
     return haystacks.some((value) =>
       value.toLowerCase().includes(normalizedQuery),
     );
   });
+
+  // Rank name matches first, then sort the rest by original order
+  const nameMatches = matches.filter((service) =>
+    service.name.toLowerCase().includes(normalizedQuery),
+  );
+  const otherMatches = matches.filter(
+    (service) => !service.name.toLowerCase().includes(normalizedQuery),
+  );
+
+  return [...nameMatches, ...otherMatches];
 }

@@ -90,7 +90,7 @@ export default function RegistryPage() {
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by service name or description"
+            placeholder="Search by name, description, category, endpoint, or provider"
             className="w-full sm:w-80 border border-border rounded-lg px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-primary"
           />
           <select
@@ -146,7 +146,7 @@ export default function RegistryPage() {
           <p className="text-base font-medium">No services found</p>
           <p className="text-sm mt-2">
             {debouncedQuery.trim()
-              ? `No services match "${debouncedQuery.trim()}". Try a different name or description keyword.`
+              ? `No services match "${debouncedQuery.trim()}". Try a different name, description, category, endpoint, or provider keyword.`
               : activeCategory !== 'all'
                 ? `No active services in the "${activeCategory}" category.`
                 : 'The registry is empty. Be the first to register a service.'}

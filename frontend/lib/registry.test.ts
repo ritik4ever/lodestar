@@ -58,4 +58,56 @@ describe('filterServices', () => {
   it('returns multiple matches when the query appears in multiple services', () => {
     expect(filterServices(SERVICES, 'weather').map((service) => service.id)).toEqual([1, 3]);
   });
+
+  it('matches service category', () => {
+    const categoryOnlyMatch: ServiceEntry = {
+      ...SERVICES[1],
+      id: 6,
+      category: 'web-search',
+    };
+    expect(filterServices([...SERVICES, categoryOnlyMatch], 'web-search')
+      .map((service) => service.id)).toEqual([6]);
+  });
+
+  it('matches service endpoint', () => {
+    expect(filterServices(SERVICES, 'data.example.com').map((service) => service.id)).toEqual([3]);
+  });
+
+  it('matches service provider', () => {
+    expect(filterServices(SERVICES, 'GBBETA123').map((service) => service.id)).toEqual([2]);
+  });
+
+  it('ranks name matches before other field matches', () => {
+    const servicesWithOverlap: ServiceEntry[] = [
+      ...SERVICES,
+      {
+        id: 4,
+        name: 'Delta Finance',
+        description: 'Financial data API',
+        endpoint: 'https://finance.example.com',
+        price_usdc: '2.00',
+        category: 'finance',
+        provider: 'GBDELTA123',
+        reputation: 20,
+        active: true,
+        registered_at: 400,
+      },
+      {
+        id: 5,
+        name: 'Epsilon Compute',
+        description: 'Distributed compute for finance workloads',
+        endpoint: 'https://compute.example.com',
+        price_usdc: '5.00',
+        category: 'compute',
+        provider: 'GBEPSILON123',
+        reputation: 15,
+        active: true,
+        registered_at: 500,
+      },
+    ];
+    // 'finance' appears in Delta Finance (name) and Epsilon Compute (description).
+    // Name match (Delta) should come before description match (Epsilon).
+    const result = filterServices(servicesWithOverlap, 'finance');
+    expect(result.map((service) => service.id)).toEqual([4, 5]);
+  });
 });
