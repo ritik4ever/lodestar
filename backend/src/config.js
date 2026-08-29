@@ -151,6 +151,33 @@ const config = Object.freeze({
     baseDelayMs: parsePositiveInt(process.env.RPC_RETRY_BASE_DELAY_MS, 200, 'RPC_RETRY_BASE_DELAY_MS'),
     maxDelayMs: parsePositiveInt(process.env.RPC_RETRY_MAX_DELAY_MS, 5_000, 'RPC_RETRY_MAX_DELAY_MS'),
   },
+
+  // Contract-error tuning. Timeouts, retry counts and TTLs that used to be
+  // hardcoded literals in lib/contract.js and lib/idempotency.js. They are now
+  // configurable so operators can tune behaviour without a code change and
+  // deploy; the defaults below preserve the original behaviour exactly.
+  contractErrors: {
+    // RPC request timeout (seconds) applied to built Soroban transactions.
+    rpcTimeoutSeconds: parsePositiveInt(process.env.RPC_TIMEOUT_SECONDS, 30, 'RPC_TIMEOUT_SECONDS'),
+    // How long a prepared registry submission token stays valid before pruning.
+    registrySubmitTokenTtlMs: parsePositiveInt(process.env.REGISTRY_SUBMIT_TOKEN_TTL_MS, 10 * 60 * 1000, 'REGISTRY_SUBMIT_TOKEN_TTL_MS'),
+    // Re-fetch the account sequence number when the last sync is older than this.
+    seqNumSyncIntervalMs: parsePositiveInt(process.env.SEQ_NUM_SYNC_INTERVAL_MS, 5_000, 'SEQ_NUM_SYNC_INTERVAL_MS'),
+    // Max retries for txBAD_SEQ before surfacing TransactionFailedError.
+    badSeqMaxRetries: parsePositiveInt(process.env.BAD_SEQ_MAX_RETRIES, 3, 'BAD_SEQ_MAX_RETRIES'),
+    // Max times to poll getTransaction for confirmation before throwing TransactionTimeoutError.
+    transactionPollMaxAttempts: parsePositiveInt(process.env.TRANSACTION_POLL_MAX_ATTEMPTS, 20, 'TRANSACTION_POLL_MAX_ATTEMPTS'),
+    // Delay between NOT_FOUND poll attempts while waiting for confirmation.
+    transactionPollDelayMs: parsePositiveInt(process.env.TRANSACTION_POLL_DELAY_MS, 1_500, 'TRANSACTION_POLL_DELAY_MS'),
+  },
+
+  // In-memory idempotency store for the payment route. Keys expire after
+  // `ttlMs` (default 24 h) and are pruned by a background timer every
+  // `purgeIntervalMs` so every lookup stays O(1).
+  idempotency: {
+    ttlMs: parsePositiveInt(process.env.IDEMPOTENCY_TTL_MS, 24 * 60 * 60 * 1000, 'IDEMPOTENCY_TTL_MS'),
+    purgeIntervalMs: parsePositiveInt(process.env.IDEMPOTENCY_PURGE_INTERVAL_MS, 60_000, 'IDEMPOTENCY_PURGE_INTERVAL_MS'),
+  },
 });
 
 export default config;

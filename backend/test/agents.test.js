@@ -28,7 +28,16 @@ vi.mock("../src/config.js", () => ({
     rateLimit: { payment: { max: 10, windowMs: 60000 }, write: { max: 10, windowMs: 60000 } },
     server: {
       secret: "SDY6B5V7K5L5K5L5K5L5K5L5K5L5K5L5K5L5K5L5K5L5K5L5K5L5K5L5"
-    }
+    },
+    contractErrors: {
+      rpcTimeoutSeconds: 30,
+      registrySubmitTokenTtlMs: 600000,
+      seqNumSyncIntervalMs: 5000,
+      badSeqMaxRetries: 3,
+      transactionPollMaxAttempts: 20,
+      transactionPollDelayMs: 1500,
+    },
+    idempotency: { ttlMs: 86400000, purgeIntervalMs: 60000 },
   },
 }));
 

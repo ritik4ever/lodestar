@@ -46,9 +46,6 @@ export {
 };
 
 
-const TIMEOUT = 30;
-const REGISTRY_SUBMIT_TOKEN_TTL_MS = 10 * 60 * 1000;
-
 // Must match `const MAX_TTL: u32 = 3110400` in contract/src/lib.rs.
 // Persistent storage entries are extended to this many ledgers on every write.
 export const SERVICE_MAX_TTL = 3_110_400;
@@ -156,7 +153,7 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
   const passphrase = getNetworkPassphrase();
 
   const now = Date.now();
-  if (retryCount > 0 || currentSeqNum === null || (now - lastSeqSyncTime > 5000)) {
+  if (retryCount > 0 || currentSeqNum === null || (now - lastSeqSyncTime > config.contractErrors.seqNumSyncIntervalMs)) {
     const acctStart = Date.now();
     const account = await server.getAccount(keypair.publicKey());
     logRpcCall('getAccount', Date.now() - acctStart);
@@ -171,7 +168,7 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
     networkPassphrase: passphrase,
   })
     .addOperation(operation)
-    .setTimeout(TIMEOUT)
+    .setTimeout(config.contractErrors.rpcTimeoutSeconds)
     .build();
 
   const simStart = Date.now();
@@ -205,7 +202,7 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
       isBadSeq = true;
     }
 
-    if (isBadSeq && retryCount < 3) {
+    if (isBadSeq && retryCount < config.contractErrors.badSeqMaxRetries) {
       logger.warn({ retryCount }, 'txBAD_SEQ encountered, retrying transaction');
       return _simulateAndSubmit(operation, signer, retryCount + 1);
     }
@@ -218,12 +215,12 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
   logger.debug({ hash: txHash }, 'Submitted Soroban transaction');
 
   let getResult;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < config.contractErrors.transactionPollMaxAttempts; i++) {
     const txStart = Date.now();
     getResult = await server.getTransaction(sendResult.hash);
     logRpcCall('getTransaction', Date.now() - txStart);
     if (getResult.status !== 'NOT_FOUND') break;
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, config.contractErrors.transactionPollDelayMs));
   }
 
   if (!getResult || getResult.status === 'NOT_FOUND') {
@@ -269,7 +266,7 @@ function createPreparedRegistrySubmission(action, xdrBase64) {
   const submitToken = randomUUID();
   preparedRegistrySubmissions.set(submitToken, {
     action,
-    expiresAt: Date.now() + REGISTRY_SUBMIT_TOKEN_TTL_MS,
+    expiresAt: Date.now() + config.contractErrors.registrySubmitTokenTtlMs,
   });
   return { xdr: xdrBase64, submitToken };
 }
@@ -285,7 +282,7 @@ async function buildUnsignedTx(operation) {
     networkPassphrase: passphrase,
   })
     .addOperation(operation)
-    .setTimeout(TIMEOUT)
+    .setTimeout(config.contractErrors.rpcTimeoutSeconds)
     .build();
 
   const simResult = await server.simulateTransaction(tx);
@@ -308,7 +305,7 @@ async function simulateRead(operation) {
     networkPassphrase: passphrase,
   })
     .addOperation(operation)
-    .setTimeout(TIMEOUT)
+    .setTimeout(config.contractErrors.rpcTimeoutSeconds)
     .build();
 
   const simStart = Date.now();
@@ -337,7 +334,7 @@ export async function simulateReadBatch(operations) {
       networkPassphrase: passphrase,
     })
       .addOperation(op)
-      .setTimeout(TIMEOUT)
+      .setTimeout(config.contractErrors.rpcTimeoutSeconds)
       .build();
 
     const simStart = Date.now();
@@ -1154,12 +1151,12 @@ async function submitSignedTx(signedXdr) {
   logger.debug({ hash: signedTxHash }, 'Submitted signed Soroban transaction');
 
   let getResult;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < config.contractErrors.transactionPollMaxAttempts; i++) {
     const txStart = Date.now();
     getResult = await server.getTransaction(sendResult.hash);
     logRpcCall('getTransaction', Date.now() - txStart);
     if (getResult.status !== 'NOT_FOUND') break;
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, config.contractErrors.transactionPollDelayMs));
   }
 
   if (!getResult || getResult.status === 'NOT_FOUND') {

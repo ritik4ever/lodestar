@@ -46,6 +46,15 @@ vi.mock('../config.js', () => ({
     contract: { agentsId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4' },
     server: { address: 'GADMINXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', secret: 'test_admin_secret_key' },
     rateLimit: { payment: { max: 10, windowMs: 60000 } },
+    contractErrors: {
+      rpcTimeoutSeconds: 30,
+      registrySubmitTokenTtlMs: 600000,
+      seqNumSyncIntervalMs: 5000,
+      badSeqMaxRetries: 3,
+      transactionPollMaxAttempts: 20,
+      transactionPollDelayMs: 1500,
+    },
+    idempotency: { ttlMs: 86400000, purgeIntervalMs: 60000 },
   },
 }));
 

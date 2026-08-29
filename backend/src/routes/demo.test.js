@@ -48,6 +48,15 @@ vi.mock('../config.js', () => ({
     demoRun: { pollMaxWaitMs: 100, pollInitialDelayMs: 10, pollMaxDelayMs: 50 },
     x402: {},
     contract: {},
+    contractErrors: {
+      rpcTimeoutSeconds: 30,
+      registrySubmitTokenTtlMs: 600_000,
+      seqNumSyncIntervalMs: 5_000,
+      badSeqMaxRetries: 3,
+      transactionPollMaxAttempts: 20,
+      transactionPollDelayMs: 1_500,
+    },
+    idempotency: { ttlMs: 86_400_000, purgeIntervalMs: 60_000 },
   },
 }));
 

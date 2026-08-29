@@ -41,6 +41,8 @@ if (process.argv.includes("--print-config")) {
         trustProxy: config.trustProxy,
         rateLimit: config.rateLimit,
         demoRun: config.demoRun,
+        contractErrors: config.contractErrors,
+        idempotency: config.idempotency,
       },
       null,
       2,
@@ -52,6 +54,11 @@ if (process.argv.includes("--print-config")) {
 validateConfig(logger);
 
 logger.info({ corsOrigin: config.corsOrigin }, "Resolved CORS origin allowlist");
+
+logger.info(
+  { contractErrors: config.contractErrors, idempotency: config.idempotency },
+  "Resolved contract-error tuning values (timeouts, retries, TTLs)",
+);
 
 const app = express();
 

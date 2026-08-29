@@ -1,9 +1,9 @@
 /**
  * In-memory idempotency store for the payment route.
  *
- * Keys expire after TTL_MS (default 24 h). Expired entries are pruned by a
- * background timer so that every lookup stays O(1). A lazy per-key expiry
- * check on read catches any stragglers between timer ticks.
+ * Keys expire after config.idempotency.ttlMs (default 24 h). Expired entries
+ * are pruned by a background timer so that every lookup stays O(1). A lazy
+ * per-key expiry check on read catches any stragglers between timer ticks.
  *
  * Lifecycle of a key:
  *   'pending'  — request is in-flight; a concurrent retry gets 409
@@ -11,8 +11,7 @@
  *   'failed'   — request threw; replays the error response
  */
 
-const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const PURGE_INTERVAL_MS = 60_000; // sweep every 60 s
+import config from '../config.js';
 
 /**
  * @type {Map<string, {
@@ -41,7 +40,7 @@ function purgeExpired() {
 
 function startPurgeTimer() {
   if (purgeTimer !== null) return;
-  purgeTimer = setInterval(purgeExpired, PURGE_INTERVAL_MS);
+  purgeTimer = setInterval(purgeExpired, config.idempotency.purgeIntervalMs);
   purgeTimer.unref();
 }
 
@@ -99,7 +98,7 @@ export function markPending(key) {
   store.set(key, {
     status: 'pending',
     result: null,
-    expiresAt: Date.now() + TTL_MS,
+    expiresAt: Date.now() + config.idempotency.ttlMs,
   });
 }
 
