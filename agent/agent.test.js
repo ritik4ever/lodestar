@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 // ── Hoisted mock refs (available inside vi.mock factories) ────────────────────
@@ -328,6 +330,134 @@ describe('runTask — payment_failed on fetch throw', () => {
     expect(fetchSpy).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     const paymentFailedCall = logError.mock.calls.find(([f]) => f?.event === EVENT.PAYMENT_FAILED);
     expect(paymentFailedCall).toBeDefined();
+  });
+});
+
+describe('pending payment recovery', () => {
+  it('reconciles a settled payment intent and avoids double-applying score updates', async () => {
+    const stateFile = path.join(process.cwd(), '.agent-pending-payments-test.json');
+    process.env.AGENT_PENDING_PAYMENT_FILE = stateFile;
+
+    const intent = {
+      id: 'intent-recovery-1',
+      status: 'pending',
+      agentAddress: 'GAGENTADDRESSMOCK000000000000000000000000000000000000000',
+      category: 'weather',
+      serviceId: MOCK_SERVICE.id,
+      serviceName: MOCK_SERVICE.name,
+      priceUsdc: MOCK_SERVICE.price_usdc,
+      txHash: 'recovery-tx-hash-123',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(stateFile, JSON.stringify([intent], null, 2));
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/transactions/recovery-tx-hash-123')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ successful: true, hash: 'recovery-tx-hash-123' }),
+        });
+      }
+      if (url.includes('/api/agents/')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ newScore: 110 }) }));
+      }
+      return Promise.resolve(makeResponse());
+    });
+
+    await expect(import('./agent.js')).resolves.toBeDefined();
+    const { reconcilePendingPaymentIntents } = await import('./agent.js');
+    const result = await reconcilePendingPaymentIntents();
+
+    expect(result.resolved).toBe(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/transactions/recovery-tx-hash-123'),
+      expect.anything()
+    );
+    expect(logInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'payment_reconciled' }),
+      expect.any(String)
+    );
+
+    const replay = await reconcilePendingPaymentIntents();
+    expect(replay.resolved).toBe(0);
+  });
+
+  it('recovers a payment after the transaction hash was received but the local score update never committed', async () => {
+    const stateFile = path.join(process.cwd(), '.agent-pending-payments-crash-recovery.json');
+    process.env.AGENT_PENDING_PAYMENT_FILE = stateFile;
+
+    const intent = {
+      id: 'payment:crash-after-txhash',
+      status: 'awaiting_score_update',
+      agentAddress: 'GAGENTADDRESSMOCK000000000000000000000000000000000000000',
+      category: 'weather',
+      serviceId: MOCK_SERVICE.id,
+      serviceName: MOCK_SERVICE.name,
+      priceUsdc: MOCK_SERVICE.price_usdc,
+      txHash: 'crash-after-txhash',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(stateFile, JSON.stringify([intent], null, 2));
+
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/transactions/crash-after-txhash')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ successful: true, hash: 'crash-after-txhash' }),
+        });
+      }
+      if (url.includes('/api/agents/')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ newScore: 110 }) }));
+      }
+      return Promise.resolve(makeResponse());
+    });
+
+    const { reconcilePendingPaymentIntents } = await import('./agent.js');
+    const result = await reconcilePendingPaymentIntents();
+
+    expect(result.resolved).toBe(1);
+
+    const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    expect(persisted[0]).toMatchObject({
+      id: 'payment:crash-after-txhash',
+      status: 'resolved',
+      txHash: 'crash-after-txhash',
+    });
+
+    const replay = await reconcilePendingPaymentIntents();
+    expect(replay.resolved).toBe(0);
+  });
+
+  it('clears a pending intent that never received a txHash after a crash before step 3', async () => {
+    const stateFile = path.join(process.cwd(), '.agent-pending-payments-missing-txhash.json');
+    process.env.AGENT_PENDING_PAYMENT_FILE = stateFile;
+
+    const intent = {
+      id: 'payment:missing-txhash',
+      status: 'pending',
+      agentAddress: 'GAGENTADDRESSMOCK000000000000000000000000000000000000000',
+      category: 'weather',
+      serviceId: MOCK_SERVICE.id,
+      serviceName: MOCK_SERVICE.name,
+      priceUsdc: MOCK_SERVICE.price_usdc,
+      txHash: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(stateFile, JSON.stringify([intent], null, 2));
+
+    const { reconcilePendingPaymentIntents } = await import('./agent.js');
+    const result = await reconcilePendingPaymentIntents();
+
+    expect(result.resolved).toBe(0);
+    const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    expect(persisted[0]).toMatchObject({
+      id: 'payment:missing-txhash',
+      status: 'abandoned',
+      failureReason: 'missing_tx_hash_after_crash',
+    });
   });
 });
 

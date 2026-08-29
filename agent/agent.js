@@ -2,6 +2,7 @@ import 'dotenv/config';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import fs from 'node:fs';
+import path from 'node:path';
 import pino from 'pino';
 import pkg from '@stellar/stellar-sdk';
 const { Keypair } = pkg;
@@ -69,6 +70,11 @@ const MAX_PER_DAY          = process.env.AGENT_MAX_PER_DAY    ?? '1.00';
 const ALLOWED_CATS         = process.env.AGENT_ALLOWED_CATEGORIES
   ? process.env.AGENT_ALLOWED_CATEGORIES.split(',').map(s => s.trim()).filter(Boolean)
   : ['weather', 'search'];
+const DEFAULT_PENDING_PAYMENT_FILE = path.join(process.cwd(), '.agent-pending-payments.json');
+
+function getPendingPaymentFile() {
+  return process.env.AGENT_PENDING_PAYMENT_FILE ?? DEFAULT_PENDING_PAYMENT_FILE;
+}
 
 let agentKeypair;
 try {
@@ -200,6 +206,87 @@ async function checkSpend(amountUsdc, category) {
   }
 }
 
+function readPendingPaymentIntents() {
+  const file = getPendingPaymentFile();
+  try {
+    if (!fs.existsSync(file)) return [];
+    const raw = fs.readFileSync(file, 'utf8').trim();
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    logger.warn({ event: 'pending_payment_load_failed', file, err }, 'Could not read pending payment intents');
+    return [];
+  }
+}
+
+function writePendingPaymentIntents(intents) {
+  const file = getPendingPaymentFile();
+  try {
+    fs.writeFileSync(file, JSON.stringify(intents, null, 2));
+  } catch (err) {
+    logger.warn({ event: 'pending_payment_write_failed', file, err }, 'Could not persist pending payment intents');
+  }
+}
+
+function createPendingPaymentIntent({ category, serviceId, serviceName, priceUsdc, txHash = null }) {
+  const intents = readPendingPaymentIntents();
+  const existing = intents.find((entry) => entry.serviceId === serviceId && entry.status === 'pending');
+  if (existing) {
+    if (txHash && !existing.txHash) {
+      existing.txHash = txHash;
+      existing.updatedAt = new Date().toISOString();
+      writePendingPaymentIntents(intents);
+    }
+    return existing;
+  }
+
+  const intent = {
+    id: txHash ? `payment:${txHash}` : `payment:${crypto.randomUUID()}`,
+    agentAddress: AGENT_ADDRESS,
+    category,
+    serviceId,
+    serviceName,
+    priceUsdc,
+    txHash,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  intents.push(intent);
+  writePendingPaymentIntents(intents);
+  return intent;
+}
+
+function markPendingPaymentIntentAsLost(intent, reason) {
+  const updated = updatePendingPaymentIntent(intent.id, {
+    status: 'abandoned',
+    failureReason: reason,
+    abandonedAt: new Date().toISOString(),
+  });
+
+  if (updated) {
+    logger.warn(
+      { event: 'payment_intent_abandoned', intentId: intent.id, serviceId: intent.serviceId, reason },
+      'Pending payment intent could not be reconciled safely and was abandoned'
+    );
+  }
+
+  return updated;
+}
+
+function updatePendingPaymentIntent(intentId, patch) {
+  const intents = readPendingPaymentIntents();
+  const index = intents.findIndex((entry) => entry.id === intentId);
+  if (index === -1) return null;
+
+  const next = { ...intents[index], ...patch, updatedAt: new Date().toISOString() };
+  intents[index] = next;
+  writePendingPaymentIntents(intents);
+  return next;
+}
+
 async function recordOutcome(amountUsdc, success, serviceId) {
   try {
     const body = JSON.stringify({ amountUsdc, success, serviceId });
@@ -227,6 +314,69 @@ async function recordOutcome(amountUsdc, success, serviceId) {
   } catch {
     // non-critical
   }
+}
+
+export async function reconcilePendingPaymentIntents() {
+  const intents = readPendingPaymentIntents();
+  let resolved = 0;
+
+  for (const intent of intents) {
+    const txHash = intent.txHash ?? null;
+    if (intent.status !== 'pending' && intent.status !== 'awaiting_score_update') continue;
+
+    if (!txHash) {
+      markPendingPaymentIntentAsLost(intent, 'missing_tx_hash_after_crash');
+      continue;
+    }
+
+    try {
+      const txUrl = `${RPC_URL.replace(/\/$/, '')}/transactions/${encodeURIComponent(txHash)}`;
+      const res = await fetchWithTimeout(txUrl, {
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!res.ok) {
+        logger.warn(
+          { event: 'payment_reconcile_pending', intentId: intent.id, txHash, httpStatus: res.status },
+          'Transaction not yet visible on-chain; keeping pending intent'
+        );
+        continue;
+      }
+
+      const tx = await res.json();
+      const settled = tx?.successful === true || tx?.status === 'success' || tx?.result_xdr != null;
+
+      if (!settled) {
+        logger.warn(
+          { event: 'payment_reconcile_pending', intentId: intent.id, txHash, tx },
+          'Transaction did not settle; leaving intent pending'
+        );
+        continue;
+      }
+
+      await recordOutcome(intent.priceUsdc, true, intent.serviceId);
+      updatePendingPaymentIntent(intent.id, { status: 'resolved', resolvedAt: new Date().toISOString(), txHash });
+      resolved += 1;
+
+      logger.info(
+        {
+          event: 'payment_reconciled',
+          intentId: intent.id,
+          serviceId: intent.serviceId,
+          priceUsdc: intent.priceUsdc,
+          txHash,
+        },
+        'Pending payment reconciled and score applied'
+      );
+    } catch (err) {
+      logger.warn(
+        { event: 'payment_reconcile_failed', intentId: intent.id, txHash, err },
+        'Could not reconcile pending payment intent'
+      );
+    }
+  }
+
+  return { resolved, count: intents.length };
 }
 
 // ── x402 client ───────────────────────────────────────────────────────────────
@@ -393,6 +543,13 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
     }
 
     const endpointUrl = buildUrl(selected.endpoint);
+    const pendingIntent = createPendingPaymentIntent({
+      category,
+      serviceId: selected.id,
+      serviceName: selected.name,
+      priceUsdc: selected.price_usdc,
+    });
+
     logger.debug(
       { event: EVENT.TASK_START, category, serviceId: selected.id, endpointUrl },
       'Sending x402 payment on Stellar'
@@ -441,9 +598,20 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
       continue;
     }
 
-    const txHash = response.headers.get('x-payment-transaction') ?? '(no hash)';
+    const txHash = response.headers.get('x-payment-transaction') ?? null;
+    if (pendingIntent) {
+      updatePendingPaymentIntent(pendingIntent.id, {
+        txHash: txHash ?? pendingIntent.txHash,
+        status: txHash ? 'awaiting_score_update' : 'pending',
+      });
+    }
     const scoreBefore = currentScore;
-    if (scoringEnabled) await recordOutcome(selected.price_usdc, true, selected.id);
+    if (scoringEnabled) {
+      await recordOutcome(selected.price_usdc, true, selected.id);
+      if (pendingIntent) {
+        updatePendingPaymentIntent(pendingIntent.id, { status: 'resolved', resolvedAt: new Date().toISOString(), txHash: txHash ?? pendingIntent.txHash });
+      }
+    }
 
     logger.info(
       {
@@ -555,6 +723,7 @@ export async function main() {
 
   const scoringEnabled = await ensureRegistered();
   const scoreAfterRegistration = currentScore;
+  await reconcilePendingPaymentIntents();
 
   const tasks = [
     { category: 'weather', buildUrl: (ep) => `${ep}?lat=40.7128&lon=-74.0060` },
