@@ -1,6 +1,46 @@
 import type { ServiceEntry, AgentEntry, SortOption, AgentSortOption } from './types';
 
 /**
+ * Parse a USDC price string to a fixed-point integer (micro-USDC, 7 decimals).
+ * Stellar USDC has 7 decimal places, so "1.50" → 15_000_000 micro-USDC.
+ * Returns null for unparseable values (e.g. "abc", "0.001abc").
+ * Exported for testing.
+ */
+export function parsePriceMicroUsdc(price: string): number | null {
+  if (typeof price !== 'string') return null;
+  const trimmed = price.trim();
+  const match = trimmed.match(/^(\d+)(?:\.(\d+))?$/);
+  if (!match) return null;
+
+  const intPart = match[1];
+  const fracPart = (match[2] ?? '').padEnd(7, '0').slice(0, 7);
+  const combined = `${intPart}${fracPart}`;
+  const normalized = combined.replace(/^0+/, '') || '0';
+  const result = Number(normalized);
+
+  return Number.isSafeInteger(result) && result >= 0 ? result : null;
+}
+
+/**
+ * Compare two price strings as fixed-point integers.
+ * Unparseable prices sort last; never returns NaN.
+ */
+function comparePrice(a: string, b: string): number {
+  const pa = parsePriceMicroUsdc(a);
+  const pb = parsePriceMicroUsdc(b);
+
+  if (pa !== null && pb !== null) {
+    if (pa < pb) return -1;
+    if (pa > pb) return 1;
+    return 0;
+  }
+  // Unparseable sorts after parseable
+  if (pa !== null) return -1;
+  if (pb !== null) return 1;
+  return 0; // both unparseable — preserve original order
+}
+
+/**
  * Sort services by the given option.
  * 
  * @param services - Array of service entries to sort
@@ -16,7 +56,7 @@ export function sortServices(
       return b.reputation - a.reputation;
     }
     if (sort === 'price') {
-      return parseFloat(a.price_usdc) - parseFloat(b.price_usdc);
+      return comparePrice(a.price_usdc, b.price_usdc);
     }
     // 'newest' - highest registered_at first
     return b.registered_at - a.registered_at;
@@ -65,7 +105,7 @@ export function sortServicesWithTieBreaker(
     if (sort === 'reputation') {
       result = b.reputation - a.reputation;
     } else if (sort === 'price') {
-      result = parseFloat(a.price_usdc) - parseFloat(b.price_usdc);
+      result = comparePrice(a.price_usdc, b.price_usdc);
     } else {
       result = b.registered_at - a.registered_at;
     }
