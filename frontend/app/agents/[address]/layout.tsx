@@ -37,7 +37,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
           type: 'profile',
           images: [
             {
-              url: '/opengraph-image',
+              url: `/agents/${agentAddress}/opengraph-image`,
               width: 1200,
               height: 630,
               alt: title,
@@ -48,7 +48,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
           card: 'summary_large_image',
           title,
           description,
-          images: ['/opengraph-image'],
+          images: [`/agents/${agentAddress}/opengraph-image`],
         },
       };
     }
@@ -61,12 +61,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     description: 'View agent credit score and details on Lodestar — the on-chain discovery layer for x402 AI agents on Stellar.',
     openGraph: {
       title: `Agent ${agentAddress.slice(0, 8)}… | Lodestar`,
-      description: 'View agent credit score and details on Lodestar.',
+      description: 'View agent credit score and details on Lodestar — the on-chain discovery layer for x402 AI agents on Stellar.',
       url: `${baseUrl}/agents/${agentAddress}`,
       type: 'profile',
       images: [
         {
-          url: '/opengraph-image',
+          url: `/agents/${agentAddress}/opengraph-image`,
           width: 1200,
           height: 630,
         },
@@ -75,8 +75,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     twitter: {
       card: 'summary_large_image',
       title: `Agent ${agentAddress.slice(0, 8)}… | Lodestar`,
-      description: 'View agent credit score and details on Lodestar.',
-      images: ['/opengraph-image'],
+      description: 'View agent credit score and details on Lodestar — the on-chain discovery layer for x402 AI agents on Stellar.',
+      images: [`/agents/${agentAddress}/opengraph-image`],
     },
   };
 }
