@@ -96,6 +96,7 @@ function normaliseTask(task) {
   return {
     category: task.category ?? null,
     success: Boolean(task.success),
+    dryRun: Boolean(task.dryRun),
     servicesDiscovered: task.servicesDiscovered ?? 0,
     servicesEligible: task.servicesEligible ?? 0,
     selection: task.selection ?? null,
