@@ -92,12 +92,78 @@ const FETCH_TIMEOUT_MS = Number.isFinite(Number(process.env.AGENT_FETCH_TIMEOUT_
   ? Math.max(1, Number(process.env.AGENT_FETCH_TIMEOUT_MS))
   : 5000;
 
+const FETCH_ERROR_CLASS = {
+  TRANSIENT: 'transient',
+  PERMANENT: 'permanent',
+};
+
+const FETCH_ERROR_EXIT_CODE = {
+  transient: 2,
+  permanent: 3,
+};
+
+const PERMANENT_FETCH_ERROR_CODES = new Set([
+  'ERR_INVALID_URL',
+  'ERR_INVALID_PROTOCOL',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+]);
+
+class FetchError extends Error {
+  constructor(operation, resource, { errorClass, cause }) {
+    const detail = cause?.message ? ` — ${cause.message}` : '';
+    super(`Fetch failed (${errorClass}) for ${operation}: ${resource}${detail}`);
+    this.name = 'FetchError';
+    this.errorClass = errorClass;
+    this.operation = operation;
+    this.resource = resource;
+    this.exitCode = FETCH_ERROR_EXIT_CODE[errorClass];
+    if (cause) this.cause = cause;
+  }
+}
+
+function classifyFetchError(err) {
+  if (err?.name === 'AbortError') return FETCH_ERROR_CLASS.TRANSIENT;
+  const code = err?.code ?? err?.cause?.code;
+  if (PERMANENT_FETCH_ERROR_CODES.has(code)) return FETCH_ERROR_CLASS.PERMANENT;
+  if (err instanceof TypeError && /invalid|parse|protocol|url/i.test(err.message)) {
+    return FETCH_ERROR_CLASS.PERMANENT;
+  }
+  return FETCH_ERROR_CLASS.TRANSIENT;
+}
+
 async function fetchWithTimeout(resource, init = {}) {
+  const { operation, ...fetchInit } = init;
+  let fetchResource = resource;
+  if (typeof resource === 'string') {
+    try {
+      fetchResource = new URL(resource).toString();
+    } catch {
+      const errorClass = FETCH_ERROR_CLASS.PERMANENT;
+      const op = operation ?? `GET ${resource}`;
+      const cause = new TypeError(`Invalid URL: ${resource}`);
+      logger.error(
+        { err: cause, errorClass, operation: op, resource, fetchTimeoutMs: FETCH_TIMEOUT_MS },
+        `Fetch failed (${errorClass}) — ${op}`
+      );
+      throw new FetchError(op, resource, { errorClass, cause });
+    }
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    return await fetch(resource, { ...init, signal: controller.signal });
+    return await fetch(fetchResource, { ...fetchInit, signal: controller.signal });
+  } catch (err) {
+    const errorClass = classifyFetchError(err);
+    const op = operation ?? `${fetchInit.method ?? 'GET'} ${resource}`;
+    logger.error(
+      { err, errorClass, operation: op, resource, method: fetchInit.method ?? 'GET', fetchTimeoutMs: FETCH_TIMEOUT_MS },
+      `Fetch failed (${errorClass}) — ${op}`
+    );
+    throw new FetchError(op, resource, { errorClass, cause: err });
   } finally {
     clearTimeout(timeoutId);
   }
@@ -645,7 +711,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     await initiateShutdown('SIGINT');
   });
   main().catch((err) => {
-    logger.error({ err }, 'Agent crashed');
+    const exitCode = Number.isInteger(err?.exitCode) ? err.exitCode : 1;
+    const errorClass = err?.errorClass ?? 'unknown';
+    logger.error({ err, errorClass, exitCode }, 'Agent crashed');
     // A crash is still a run outcome — emit the artefact before exiting (#843).
     writeRunSummary(
       buildRunSummary({
@@ -657,6 +725,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       }),
       { logger },
     );
-    process.exit(1);
+    process.exit(exitCode);
   });
 }
