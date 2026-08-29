@@ -19,12 +19,29 @@ import logger from "../lib/logger.js";
 import { ContractError } from "../lib/ContractError.js";
 import { writeRateLimiter } from "../middleware/rateLimiter.js";
 import { isValidStellarAddress } from "../middleware/addressValidator.js";
+import config from "../config.js";
+import {
+  generateCacheKey,
+  getRegistryCache,
+  setRegistryCache,
+  clearRegistryCache,
+} from "../lib/registryCache.js";
 
 const router = Router();
 
 const PAGE_SIZE = 20;
 const SERVICE_CATEGORIES = new Set(["search", "weather", "finance", "ai", "data", "compute"]);
 const PRICE_USDC_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+function annotateTtlWarning(service, currentLedger) {
+  if (!service || currentLedger == null || service.registered_at == null) {
+    return service;
+  }
+  const expiry = service.registered_at + SERVICE_MAX_TTL;
+  const remaining = expiry - currentLedger;
+  const ttl_warning = remaining <= SERVICE_TTL_WARNING_LEDGERS;
+  return { ...service, ttl_warning };
+}
 
 function normalizePriceUsdc(value) {
   if (typeof value === "number") {
@@ -143,7 +160,13 @@ router.get("/services", async (req, res) => {
       );
     }
 
-    res.json({ services, count: services.length });
+    const responseData = { services, count: services.length };
+    const entry = setRegistryCache(cacheKey, responseData);
+    res.setHeader("ETag", entry.etag);
+    if (req.headers["if-none-match"] === entry.etag) {
+      return res.status(304).end();
+    }
+    res.json(responseData);
   } catch (err) {
     if (err instanceof ContractError) {
       if (err.code === "SIMULATION_FAILED") {
@@ -165,6 +188,20 @@ router.get("/services/:id", async (req, res) => {
       return res
         .status(400)
         .json({ error: "Invalid service ID", code: "INVALID_ID" });
+    }
+
+    const cacheKey = generateCacheKey(req);
+    const ttlMs = config.registryCacheTtlMs;
+    const maxAgeSec = Math.floor(ttlMs / 1000);
+    res.setHeader("Cache-Control", `public, max-age=${maxAgeSec}`);
+
+    const cached = getRegistryCache(cacheKey, ttlMs);
+    if (cached) {
+      res.setHeader("ETag", cached.etag);
+      if (req.headers["if-none-match"] === cached.etag) {
+        return res.status(304).end();
+      }
+      return res.json(cached.data);
     }
 
     const [serviceResult, ledgerResult] = await Promise.allSettled([
@@ -190,7 +227,14 @@ router.get("/services/:id", async (req, res) => {
 
     const currentLedger =
       ledgerResult.status === "fulfilled" ? ledgerResult.value : null;
-    res.json(annotateTtlWarning(service, currentLedger));
+    const responseData = annotateTtlWarning(service, currentLedger);
+
+    const entry = setRegistryCache(cacheKey, responseData);
+    res.setHeader("ETag", entry.etag);
+    if (req.headers["if-none-match"] === entry.etag) {
+      return res.status(304).end();
+    }
+    res.json(responseData);
   } catch (err) {
     logger.error({ err }, "GET /api/services/:id failed");
     res.status(500).json({ error: "Failed to fetch service", code: "FETCH_ERROR" });
@@ -226,6 +270,7 @@ router.post("/services/:id/deactivate", writeRateLimiter(), async (req, res) => 
     }
 
     const prepared = await deactivateServiceOnChain(parsedId, providerAddress);
+    clearRegistryCache();
     logger.info({ id: parsedId, providerAddress }, "Built unsigned deactivation tx");
     res.json(prepared);
   } catch (err) {
@@ -280,6 +325,20 @@ router.get("/services/:id/history", async (req, res) => {
 
 router.get("/stats", async (req, res) => {
   try {
+    const cacheKey = generateCacheKey(req);
+    const ttlMs = config.registryCacheTtlMs;
+    const maxAgeSec = Math.floor(ttlMs / 1000);
+    res.setHeader("Cache-Control", `public, max-age=${maxAgeSec}`);
+
+    const cached = getRegistryCache(cacheKey, ttlMs);
+    if (cached) {
+      res.setHeader("ETag", cached.etag);
+      if (req.headers["if-none-match"] === cached.etag) {
+        return res.status(304).end();
+      }
+      return res.json(cached.data);
+    }
+
     const totalServices = await getServiceCount();
     const totalPages = Math.ceil(totalServices / PAGE_SIZE);
     let allServices = [];
@@ -295,7 +354,13 @@ router.get("/stats", async (req, res) => {
       null,
     );
 
-    res.json({ totalServices, categories, latestService });
+    const responseData = { totalServices, categories, latestService };
+    const entry = setRegistryCache(cacheKey, responseData);
+    res.setHeader("ETag", entry.etag);
+    if (req.headers["if-none-match"] === entry.etag) {
+      return res.status(304).end();
+    }
+    res.json(responseData);
   } catch (err) {
     logger.error({ err }, "GET /api/stats failed");
     res.status(500).json({ error: "Failed to fetch stats", code: "FETCH_ERROR" });
@@ -310,6 +375,20 @@ router.get("/registry/by-provider/:address", async (req, res) => {
         error: "Invalid Stellar address format",
         code: "INVALID_ADDRESS",
       });
+    }
+
+    const cacheKey = generateCacheKey(req);
+    const ttlMs = config.registryCacheTtlMs;
+    const maxAgeSec = Math.floor(ttlMs / 1000);
+    res.setHeader("Cache-Control", `public, max-age=${maxAgeSec}`);
+
+    const cached = getRegistryCache(cacheKey, ttlMs);
+    if (cached) {
+      res.setHeader("ETag", cached.etag);
+      if (req.headers["if-none-match"] === cached.etag) {
+        return res.status(304).end();
+      }
+      return res.json(cached.data);
     }
 
     const [servicesResult, ledgerResult] = await Promise.allSettled([
@@ -333,7 +412,13 @@ router.get("/registry/by-provider/:address", async (req, res) => {
       annotateTtlWarning(s, currentLedger),
     );
 
-    res.json({ services, count: services.length });
+    const responseData = { services, count: services.length };
+    const entry = setRegistryCache(cacheKey, responseData);
+    res.setHeader("ETag", entry.etag);
+    if (req.headers["if-none-match"] === entry.etag) {
+      return res.status(304).end();
+    }
+    res.json(responseData);
   } catch (err) {
     if (err instanceof ContractError) {
       if (err.code === "SIMULATION_FAILED") {
@@ -444,6 +529,7 @@ router.post("/registry/submit-signed-tx", writeRateLimiter(), async (req, res) =
     validatePreparedRegistrySubmission(submitToken, signedXdr);
 
     const result = await submitSignedRegistryTx(signedXdr);
+    clearRegistryCache();
     logger.info({ hash: result.hash, id: result.id }, "Submitted wallet-signed registry tx");
     res.json({ success: true, ...result });
   } catch (err) {
@@ -493,6 +579,7 @@ router.post("/reputation/:id", writeRateLimiter(), async (req, res) => {
     }
 
     const newReputation = await updateReputation(id, positive, agent);
+    clearRegistryCache();
     res.json({ success: true, newReputation });
   } catch (err) {
     // SIMULATION_FAILED covers on-chain rejections such as the vote cooldown

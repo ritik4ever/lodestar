@@ -52,6 +52,8 @@ vi.mock('../middleware/rateLimiter.js', () => ({
   writeRateLimiter: () => (_req, _res, next) => next(),
 }));
 
+import { clearRegistryCache } from '../lib/registryCache.js';
+
 let app;
 const VALID_STELLAR_ADDRESS = 'GAMASX3TLJIDO42FO3GTX7IQAYN7RJ4U4CXJOROTB7RSV3NGPUEIEQH3';
 
@@ -60,6 +62,10 @@ beforeAll(async () => {
   app = express();
   app.use(express.json());
   app.use('/api', router);
+});
+
+beforeEach(() => {
+  clearRegistryCache();
 });
 
 function makeService(overrides = {}) {
@@ -1045,5 +1051,108 @@ describe('GET /api/services/:id — ttl_warning annotation', () => {
 
     expect(res.status).toBe(200);
     expect('ttl_warning' in res.body).toBe(false);
+  });
+});
+
+// ── Response Caching & ETag / Cache-Control ──────────────────────────────────
+
+describe('Response Caching & ETag / Cache-Control on Registry Endpoints (#352)', () => {
+  beforeEach(() => {
+    mockListServices.mockReset();
+    mockGetService.mockReset();
+    mockGetReputationHistory.mockReset();
+    mockUpdateReputation.mockReset();
+    mockDeactivateServiceOnChain.mockReset();
+    mockSubmitSignedRegistryTx.mockReset();
+    mockGetCurrentLedgerSequence.mockReset();
+    clearRegistryCache();
+  });
+
+  it('serves repeated identical GET /api/services reads from cache without re-fetching chain data', async () => {
+    const services = [makeService({ id: 1 }), makeService({ id: 2 })];
+    mockListServices.mockResolvedValue(services);
+    mockGetCurrentLedgerSequence.mockResolvedValue(100_000);
+
+    const res1 = await request(app).get('/api/services?category=weather');
+    expect(res1.status).toBe(200);
+    expect(res1.headers['cache-control']).toBe('public, max-age=10');
+    expect(res1.headers['etag']).toBeDefined();
+
+    const res2 = await request(app).get('/api/services?category=weather');
+    expect(res2.status).toBe(200);
+    expect(res2.body).toEqual(res1.body);
+    expect(res2.headers['etag']).toBe(res1.headers['etag']);
+
+    // listServices should only be called ONCE despite 2 GET requests
+    expect(mockListServices).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 304 Not Modified when client provides matching If-None-Match header', async () => {
+    const services = [makeService({ id: 1 })];
+    mockListServices.mockResolvedValue(services);
+    mockGetCurrentLedgerSequence.mockResolvedValue(100_000);
+
+    const res1 = await request(app).get('/api/services');
+    const etag = res1.headers['etag'];
+    expect(etag).toBeDefined();
+
+    const res2 = await request(app)
+      .get('/api/services')
+      .set('If-None-Match', etag);
+
+    expect(res2.status).toBe(304);
+    expect(res2.text).toBe('');
+  });
+
+  it('normalizes query parameter order so different ordering hits the same cache entry', async () => {
+    mockListServices.mockResolvedValue([makeService({ id: 1 })]);
+    mockGetCurrentLedgerSequence.mockResolvedValue(100_000);
+
+    await request(app).get('/api/services?q=test&category=weather');
+    await request(app).get('/api/services?category=weather&q=test');
+
+    expect(mockListServices).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates cache on successful deactivation write', async () => {
+    mockListServices.mockResolvedValue([makeService({ id: 1 })]);
+    mockGetCurrentLedgerSequence.mockResolvedValue(100_000);
+
+    // Warm cache
+    await request(app).get('/api/services');
+    expect(mockListServices).toHaveBeenCalledTimes(1);
+
+    // Deactivate service
+    mockDeactivateServiceOnChain.mockResolvedValueOnce({ xdr: 'XDR', submitToken: 'TOKEN' });
+    const deactRes = await request(app)
+      .post('/api/services/1/deactivate')
+      .send({ providerAddress: VALID_STELLAR_ADDRESS });
+    expect(deactRes.status).toBe(200);
+
+    // Subsequent GET should trigger a fresh fetch
+    await request(app).get('/api/services');
+    expect(mockListServices).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidates cache on successful reputation write', async () => {
+    const VALID_AGENT = 'GBXGQ2B3YMK7RZX7D2IQKABXW5EFVP2UAKNY43Q2PXZO33575BRP6SVD';
+    mockIsAllowedReputationAgent.mockReturnValue(true);
+    mockListServices.mockResolvedValue([makeService({ id: 1 })]);
+    mockGetCurrentLedgerSequence.mockResolvedValue(100_000);
+
+    // Warm cache
+    await request(app).get('/api/services');
+    expect(mockListServices).toHaveBeenCalledTimes(1);
+
+    // Vote reputation
+    mockUpdateReputation.mockResolvedValueOnce(105);
+    const voteRes = await request(app)
+      .post('/api/reputation/1')
+      .send({ positive: true, agent: VALID_AGENT });
+    expect(voteRes.status).toBe(200);
+
+    // Subsequent GET should trigger a fresh fetch
+    await request(app).get('/api/services');
+    expect(mockListServices).toHaveBeenCalledTimes(2);
   });
 });

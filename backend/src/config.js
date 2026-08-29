@@ -141,16 +141,8 @@ const config = Object.freeze({
   // the max polling window (30 s) so an in-flight poll can finish.
   shutdownTimeoutMs: parsePositiveInt(process.env.SHUTDOWN_TIMEOUT_MS, 35_000, 'SHUTDOWN_TIMEOUT_MS'),
 
-  // RPC retry with jittered exponential backoff for transient failures.
-  // 429 (rate-limited) and 5xx responses from public Stellar RPC endpoints are
-  // retried automatically so a brief throttle doesn't become a user-visible
-  // failure. Each retry delays baseDelayMs * 2^attempt with ±50 % jitter, capped
-  // at maxDelayMs. After maxRetries the call fails with code RPC_THROTTLED.
-  rpcRetry: {
-    maxRetries: parsePositiveInt(process.env.RPC_RETRY_MAX_RETRIES, 4, 'RPC_RETRY_MAX_RETRIES'),
-    baseDelayMs: parsePositiveInt(process.env.RPC_RETRY_BASE_DELAY_MS, 200, 'RPC_RETRY_BASE_DELAY_MS'),
-    maxDelayMs: parsePositiveInt(process.env.RPC_RETRY_MAX_DELAY_MS, 5_000, 'RPC_RETRY_MAX_DELAY_MS'),
-  },
+  // Configurable TTL (ms) for response caching on read-heavy registry endpoints.
+  registryCacheTtlMs: parsePositiveInt(process.env.REGISTRY_CACHE_TTL_MS, 10_000, 'REGISTRY_CACHE_TTL_MS'),
 });
 
 export default config;
