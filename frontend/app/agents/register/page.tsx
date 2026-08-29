@@ -4,10 +4,11 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@/components/WalletContext';
 import ScoreBadge from '@/components/ScoreBadge';
+import type { Category } from '@/lib/types';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
-const CATEGORY_OPTIONS = ['weather', 'search', 'finance', 'data', 'compute', 'storage', 'ai', 'other'];
+const CATEGORY_OPTIONS: Category[] = ['weather', 'search', 'finance', 'ai', 'data', 'compute'];
 
 export default function RegisterAgentPage() {
   const { address, status } = useWallet();
@@ -22,13 +23,13 @@ export default function RegisterAgentPage() {
   });
   const [agentAddress, setAgentAddress] = useState('');
   const [useConnected, setUseConnected] = useState(true);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<Category[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const resolvedAddress = useConnected ? (address ?? '') : agentAddress;
 
-  function toggleCategory(cat: string) {
+  function toggleCategory(cat: Category) {
     setSelectedCategories((prev) =>
       prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
     );
