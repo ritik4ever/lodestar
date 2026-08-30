@@ -116,7 +116,67 @@ export const EVENT = {
   PAYMENT_FAILED:      'payment_failed',
   SCORE_UPDATED:       'score_updated',
   AGENT_COMPLETE:      'agent_complete',
+  HTTP_CLIENT_INIT_FAILED: 'http_client_init_failed',
 };
+
+// ── Exit codes / actionable HTTP client errors (#823) ───────────────────────
+
+export const EXIT_CODE = {
+  SUCCESS: 0,
+  TRANSIENT: 75, // EX_TEMPFAIL — retryable, supervisor should restart
+  PERMANENT: 78, // EX_CONFIG  — fix config, do not restart
+};
+
+export class HttpClientError extends Error {
+  constructor(message, { kind, operation, safeInputs, cause } = {}) {
+    super(message, cause ? { cause } : undefined);
+    this.name = 'HttpClientError';
+    this.kind = kind ?? 'permanent';
+    this.operation = operation ?? 'buildHttpClient';
+    this.safeInputs = safeInputs ?? {};
+    this.cause = cause;
+    this.code = kind === 'transient' ? 'HTTP_CLIENT_TRANSIENT' : 'HTTP_CLIENT_PERMANENT';
+  }
+}
+
+function getSafeHttpClientInputs() {
+  return {
+    rpcUrl: RPC_URL,
+    network: 'stellar:testnet',
+    secretSource: process.env.AGENT_STELLAR_SECRET_FILE ? 'file' : 'env',
+    secretFilePath: process.env.AGENT_STELLAR_SECRET_FILE ?? null,
+  };
+}
+
+export function classifyHttpClientError(err) {
+  if (err instanceof HttpClientError) return err.kind;
+  const cause = err?.cause ?? null;
+  const code = String(err?.code ?? cause?.code ?? '').toUpperCase();
+  const name = String(err?.name ?? cause?.name ?? '');
+  const msg = String(err?.message ?? cause?.message ?? err ?? '').toLowerCase();
+
+  // Explicit transient markers
+  if (name === 'AbortError' || msg.includes('aborted') || msg.includes('aborterror')) return 'transient';
+  if (msg.includes('timed out') || msg.includes('timeout') || name === 'TimeoutError') return 'transient';
+  if (['ETIMEDOUT','ECONNREFUSED','ECONNRESET','ENOTFOUND','EAI_AGAIN','EHOSTUNREACH','ENETUNREACH','EPIPE'].includes(code)) return 'transient';
+  if (msg.includes('fetch failed') || msg.includes('networkerror') || msg.includes('econn') || msg.includes('enotfound') || msg.includes('eai_again')) return 'transient';
+  if (err?.status === 429 || (typeof err?.status === 'number' && err.status >= 500 && err.status < 600)) return 'transient';
+  if (cause?.status === 429 || (typeof cause?.status === 'number' && cause.status >= 500 && cause.status < 600)) return 'transient';
+
+  // Everything else is permanent (config) — safe default to avoid retry storms
+  return 'permanent';
+}
+
+function logHttpClientFailure(err) {
+  const kind = err?.kind ?? classifyHttpClientError(err);
+  const operation = err?.operation ?? 'buildHttpClient';
+  const safeInputs = err?.safeInputs ?? getSafeHttpClientInputs();
+  const level = kind === 'transient' ? 'warn' : 'error';
+  const message = kind === 'transient'
+    ? `${operation} failed (transient) — retryable, supervisor should restart`
+    : `${operation} failed (permanent) — fix config, do not retry`;
+  logger[level]({ event: EVENT.HTTP_CLIENT_INIT_FAILED, operation, kind, code: err?.code ?? (kind === 'transient' ? 'HTTP_CLIENT_TRANSIENT' : 'HTTP_CLIENT_PERMANENT'), safeInputs, err: err?.cause ?? err }, message);
+}
 
 // ── Credit scoring helpers ────────────────────────────────────────────────────
 
@@ -231,8 +291,6 @@ async function recordOutcome(amountUsdc, success, serviceId) {
 
 // ── x402 client ───────────────────────────────────────────────────────────────
 
-const httpClient = buildHttpClient();
-
 export function dispose() {
   logger.info('Shutting down Lodestar Agent');
 }
@@ -241,14 +299,63 @@ export function dispose() {
 // the backend cannot disagree on rounding (#853). The previous local copies
 // used floating-point math and were removed.
 
-function buildHttpClient() {
-  // Re-read the secret for the x402 signer since the module-level reference
-  // has already been zeroed. loadSecret() re-reads from the env var or file.
-  const secretForSigner = loadSecret();
-  const signer = createEd25519Signer(secretForSigner, 'stellar:testnet');
-  const scheme = new ExactStellarScheme(signer, { url: RPC_URL });
-  const x402 = new x402Client().register('stellar:*', scheme);
-  const httpClient = new x402HTTPClient(x402);
+export function buildHttpClient() {
+  const safeInputs = getSafeHttpClientInputs();
+
+  // Each sub-operation is wrapped so the log can name the failing step and
+  // the caller can decide whether to retry (transient) or fix config (permanent).
+  let secretForSigner;
+  try {
+    secretForSigner = loadSecret();
+  } catch (err) {
+    throw new HttpClientError(err.message ?? 'Failed to load secret', {
+      kind: 'permanent',
+      operation: 'buildHttpClient.loadSecret',
+      safeInputs: { ...safeInputs, filePath: safeInputs.secretFilePath },
+      cause: err,
+    });
+  }
+
+  let signer;
+  try {
+    signer = createEd25519Signer(secretForSigner, 'stellar:testnet');
+  } catch (err) {
+    const kind = classifyHttpClientError(err);
+    throw new HttpClientError('Failed to create Ed25519 signer', {
+      kind,
+      operation: 'buildHttpClient.createSigner',
+      safeInputs,
+      cause: err,
+    });
+  }
+
+  let scheme;
+  try {
+    scheme = new ExactStellarScheme(signer, { url: RPC_URL });
+  } catch (err) {
+    const kind = classifyHttpClientError(err);
+    throw new HttpClientError('Failed to create ExactStellarScheme', {
+      kind,
+      operation: 'buildHttpClient.createScheme',
+      safeInputs,
+      cause: err,
+    });
+  }
+
+  let x402;
+  let httpClient;
+  try {
+    x402 = new x402Client().register('stellar:*', scheme);
+    httpClient = new x402HTTPClient(x402);
+  } catch (err) {
+    const kind = classifyHttpClientError(err);
+    throw new HttpClientError('Failed to create x402 client', {
+      kind,
+      operation: 'buildHttpClient.createClient',
+      safeInputs,
+      cause: err,
+    });
+  }
 
   // Implement fetch manually — x402HTTPClient.fetch() was removed in this version
   httpClient.fetch = async (url, init = {}) => {
@@ -269,6 +376,48 @@ function buildHttpClient() {
   };
 
   return httpClient;
+}
+
+// Lazy singleton — defers construction to main() so failures can be
+// classified and reported with the correct exit code. Module import no longer
+// crashes with an untyped error before main() runs.
+let _httpClient = null;
+let _httpClientInitError = null;
+
+export function getHttpClient() {
+  if (_httpClient) return _httpClient;
+  if (_httpClientInitError) throw _httpClientInitError;
+  try {
+    _httpClient = buildHttpClient();
+    return _httpClient;
+  } catch (err) {
+    _httpClientInitError = err instanceof HttpClientError ? err : new HttpClientError(err.message ?? 'buildHttpClient failed', { kind: classifyHttpClientError(err), operation: err.operation ?? 'buildHttpClient', safeInputs: err.safeInputs ?? getSafeHttpClientInputs(), cause: err });
+    throw _httpClientInitError;
+  }
+}
+
+// Eager instance for backwards-compat with callers that pass no client.
+// If construction fails (e.g. missing env in tests where mocks make it succeed),
+// fall back to lazy getter instead of crashing at import time.
+let httpClient;
+try {
+  httpClient = buildHttpClient();
+  _httpClient = httpClient;
+} catch (err) {
+  _httpClientInitError = err;
+  // Provide a lazy proxy so runTask default param can still defer
+  httpClient = new Proxy({}, {
+    get(_target, prop) {
+      const client = getHttpClient();
+      const v = client[prop];
+      return typeof v === 'function' ? v.bind(client) : v;
+    },
+  });
+}
+
+export function resetHttpClientForTests() {
+  _httpClient = null;
+  _httpClientInitError = null;
 }
 
 // ── Registry helpers ──────────────────────────────────────────────────────────
@@ -553,6 +702,26 @@ export async function main() {
     'Lodestar Agent starting'
   );
 
+  let client;
+  try {
+    client = getHttpClient();
+  } catch (err) {
+    const httpErr = err instanceof HttpClientError ? err : new HttpClientError(err.message ?? 'buildHttpClient failed', { kind: classifyHttpClientError(err), operation: err.operation ?? 'buildHttpClient', safeInputs: err.safeInputs ?? getSafeHttpClientInputs(), cause: err });
+    logHttpClientFailure(httpErr);
+    writeRunSummary(
+      buildRunSummary({
+        agentAddress: AGENT_ADDRESS,
+        agentName: AGENT_NAME,
+        startedAt: runStart,
+        tasks: [],
+        error: httpErr,
+      }),
+      { logger },
+    );
+    process.exit(httpErr.kind === 'transient' ? EXIT_CODE.TRANSIENT : EXIT_CODE.PERMANENT);
+    return;
+  }
+
   const scoringEnabled = await ensureRegistered();
   const scoreAfterRegistration = currentScore;
 
@@ -575,7 +744,7 @@ export async function main() {
       continue;
     }
 
-    const result = await runTask(category, buildUrl, scoringEnabled, httpClient);
+    const result = await runTask(category, buildUrl, scoringEnabled, client);
     taskResults.push({ category, ...result });
     if (result.success) {
       successCount++;
@@ -645,6 +814,23 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     await initiateShutdown('SIGINT');
   });
   main().catch((err) => {
+    const isHttpClientError = err instanceof HttpClientError || err?.operation?.startsWith?.('buildHttpClient');
+    if (isHttpClientError) {
+      const httpErr = err instanceof HttpClientError ? err : new HttpClientError(err.message ?? 'buildHttpClient failed', { kind: classifyHttpClientError(err), operation: err.operation ?? 'buildHttpClient', safeInputs: err.safeInputs ?? getSafeHttpClientInputs(), cause: err });
+      logHttpClientFailure(httpErr);
+      writeRunSummary(
+        buildRunSummary({
+          agentAddress: AGENT_ADDRESS,
+          agentName: AGENT_NAME,
+          startedAt: Date.now(),
+          tasks: [],
+          error: httpErr,
+        }),
+        { logger },
+      );
+      process.exit(httpErr.kind === 'transient' ? EXIT_CODE.TRANSIENT : EXIT_CODE.PERMANENT);
+      return;
+    }
     logger.error({ err }, 'Agent crashed');
     // A crash is still a run outcome — emit the artefact before exiting (#843).
     writeRunSummary(
