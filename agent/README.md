@@ -29,8 +29,10 @@ Expected output when healthy:
 [2026-01-01 00:00:00.150 +0000] INFO  (index): Already registered {"event":"agent_registered","agentAddress":"G...","score":100,"scoringEnabled":true}
 [2026-01-01 00:00:00.160 +0000] INFO  (index): Task started {"event":"task_start","category":"weather","agentAddress":"G..."}
 [2026-01-01 00:00:02.800 +0000] INFO  (index): Payment successful {"event":"payment_success","category":"weather","serviceId":1,"serviceName":"WeatherService","priceUsdc":"0.001","txHash":"abc123...","scoreBefore":100,"taskDurationMs":2640}
-[2026-01-01 00:00:02.850 +0000] INFO  (index): Score updated {"event":"score_updated","agentAddress":"G...","scoreBefore":100,"scoreAfter":110}
-[2026-01-01 00:00:02.900 +0000] INFO  (index): Agent run complete {"event":"agent_complete","agentAddress":"G...","totalTasks":1,"successCount":1,"failCount":0,"totalUsdcSpent":"0.001","finalScore":110,"scoreDelta":10,"runDurationMs":3800}
+[2026-01-01 00:00:02.810 +0000] INFO  (index): Recording outcome {"event":"outcome_recording","runId":"xyz-abc123","agentAddress":"G...","serviceId":1,"amountUsdc":"0.001","outcome":"success"}
+[2026-01-01 00:00:02.850 +0000] INFO  (index): Outcome recorded {"event":"outcome_recorded","runId":"xyz-abc123","agentAddress":"G...","serviceId":1,"amountUsdc":"0.001","outcome":"success","httpStatus":200,"scoreBefore":100,"scoreAfter":110}
+[2026-01-01 00:00:02.855 +0000] INFO  (index): Score updated {"event":"score_updated","runId":"xyz-abc123","agentAddress":"G...","scoreBefore":100,"scoreAfter":110}
+[2026-01-01 00:00:02.900 +0000] INFO  (index): Agent run complete {"event":"agent_complete","runId":"xyz-abc123","agentAddress":"G...","totalTasks":1,"successCount":1,"failCount":0,"totalUsdcSpent":"0.001","finalScore":110,"scoreDelta":10,"runDurationMs":3800}
 ```
 
 Common failures:
@@ -44,6 +46,8 @@ No services meet minimum reputation threshold {"event":"task_start","category":"
 Payment failed — network error {"event":"payment_failed","category":"weather","serviceId":1,"serviceName":"WeatherService","priceUsdc":"0.001","err":{}}
 Payment failed — endpoint error {"event":"payment_failed","category":"weather","serviceId":1,"serviceName":"WeatherService","priceUsdc":"0.001","httpStatus":500}
 All candidate services exhausted {"event":"payment_failed","category":"weather","servicesAttempted":2}
+Outcome record rejected by API {"event":"outcome_failed","runId":"xyz-abc123","agentAddress":"G...","serviceId":1,"amountUsdc":"0.001","outcome":"success","httpStatus":403}
+Outcome record rejected by API {"event":"outcome_failed","runId":"xyz-abc123","agentAddress":"G...","serviceId":1,"amountUsdc":"0.001","outcome":"success","httpStatus":403}
 ```
 
 ## Environment Variables

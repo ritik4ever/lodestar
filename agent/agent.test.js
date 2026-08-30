@@ -14,7 +14,12 @@ const { logInfo, logWarn, logError, logDebug } = vi.hoisted(() => ({
 vi.mock('dotenv/config', () => ({}));
 
 vi.mock('pino', () => ({
-  default: () => ({ info: logInfo, warn: logWarn, error: logError, debug: logDebug }),
+  default: () => ({
+    info: logInfo, warn: logWarn, error: logError, debug: logDebug,
+    // Child loggers share the same mocked sinks so assertions on log calls
+    // keep working with the runId-correlated logger (#820).
+    child: () => ({ info: logInfo, warn: logWarn, error: logError, debug: logDebug }),
+  }),
 }));
 
 vi.mock('@stellar/stellar-sdk', () => ({
