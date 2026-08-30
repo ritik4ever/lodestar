@@ -45,7 +45,16 @@ import * as contractLib from './contract.js';
 const { StrKey } = sdkPkg;
 const VALID_CONTRACT_ID = StrKey.encodeContract(Buffer.alloc(32));
 
-const { mapAgent, mapPolicy } = contractLib;
+const {
+  mapAgent,
+  mapPolicy,
+  addressToBytes32,
+  bytes32ToAddress,
+  listAgents,
+  listAgentsPage,
+  getAgentIds,
+  getAgentIdsPage,
+} = contractLib;
 
 function resetMockServer() {
   mockGetAccount.mockReset();
@@ -556,6 +565,148 @@ describe('mapPolicy', () => {
     const result = mapPolicy(raw);
 
     expect(result.allowed_categories).toEqual([]);
+  });
+
+  it('should handle Buffer or Uint8Array agent_address', () => {
+    const rawBytes = StrKey.decodeEd25519PublicKey('GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ');
+    const raw = {
+      agent_address: rawBytes,
+      max_per_tx_stroops: 10000000n,
+      max_per_day_stroops: 50000000n,
+      allowed_categories: ['weather'],
+      min_score_to_earn: 100n,
+      daily_spent_stroops: 0n,
+      last_reset_ledger: 0n,
+    };
+
+    const result = mapPolicy(raw);
+    expect(result.agent_address).toBe('GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ');
+  });
+});
+
+describe('addressToBytes32 and bytes32ToAddress conversions', () => {
+  it('converts a Stellar G... public key to 32 bytes and back', () => {
+    const pubKey = 'GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ';
+    const bytes = addressToBytes32(pubKey);
+    expect(bytes).toBeInstanceOf(Buffer);
+    expect(bytes.length).toBe(32);
+
+    const reconstructed = bytes32ToAddress(bytes);
+    expect(reconstructed).toBe(pubKey);
+  });
+
+  it('handles Buffer and Uint8Array input to addressToBytes32', () => {
+    const buf = Buffer.alloc(32, 7);
+    expect(addressToBytes32(buf)).toEqual(buf);
+    const u8 = new Uint8Array(32);
+    expect(addressToBytes32(u8)).toEqual(Buffer.alloc(32, 0));
+  });
+
+  it('handles address object with toString method', () => {
+    const pubKey = 'GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ';
+    const obj = { toString: () => pubKey };
+    const bytes = addressToBytes32(obj);
+    expect(bytes.length).toBe(32);
+    expect(bytes32ToAddress(bytes)).toBe(pubKey);
+  });
+
+  it('throws on invalid address in addressToBytes32', () => {
+    expect(() => addressToBytes32(12345)).toThrow('Cannot convert address to 32 bytes');
+  });
+});
+
+describe('mapAgent with raw bytes (Vec<BytesN<32>> representation)', () => {
+  it('should map agent with Buffer address and owner', () => {
+    const addrBytes = StrKey.decodeEd25519PublicKey('GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ');
+    const ownerBytes = StrKey.decodeEd25519PublicKey('GBV4ZDEPLQTVPQFJRME2BGYL6VQJLTTRIWJHTJNFGXBVF4WY5DJIQK2K');
+
+    const raw = {
+      address: addrBytes,
+      name: 'Bytes Agent',
+      description: 'Agent stored with raw bytes',
+      owner: ownerBytes,
+      score: 100n,
+      total_payments: 5n,
+      successful_payments: 3n,
+      failed_payments: 2n,
+      total_volume_stroops: 10000000n,
+      registered_at: 1000n,
+      last_active: 2000n,
+      active: true,
+      flagged: false,
+      flag_reason: '',
+    };
+
+    const result = mapAgent(raw);
+    expect(result.address).toBe('GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ');
+    expect(result.owner).toBe('GBV4ZDEPLQTVPQFJRME2BGYL6VQJLTTRIWJHTJNFGXBVF4WY5DJIQK2K');
+    expect(result.name).toBe('Bytes Agent');
+  });
+});
+
+describe('listAgents, listAgentsPage, and getAgentIds', () => {
+  beforeEach(() => {
+    resetMockServer();
+  });
+
+  it('listAgents returns mapped agent entries', async () => {
+    const rawAgent = {
+      address: 'GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ',
+      name: 'Test Agent',
+      description: 'A test agent',
+      owner: 'GBV4ZDEPLQTVPQFJRME2BGYL6VQJLTTRIWJHTJNFGXBVF4WY5DJIQK2K',
+      score: 100n,
+      total_payments: 5n,
+      successful_payments: 3n,
+      failed_payments: 2n,
+      total_volume_stroops: 10000000n,
+      registered_at: 1000n,
+      last_active: 2000n,
+      active: true,
+      flagged: false,
+      flag_reason: '',
+    };
+
+    mockSimulateTransaction.mockResolvedValueOnce({
+      result: {
+        retval: sdkPkg.nativeToScVal([rawAgent]),
+      },
+    });
+
+    const agents = await listAgents(10);
+    expect(agents).toHaveLength(1);
+    expect(agents[0].address).toBe('GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ');
+    expect(agents[0].name).toBe('Test Agent');
+  });
+
+  it('getAgentIds reconstructs Stellar addresses from BytesN<32>', async () => {
+    const pubKey = 'GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ';
+    const rawBytes = StrKey.decodeEd25519PublicKey(pubKey);
+
+    mockSimulateTransaction.mockResolvedValueOnce({
+      result: {
+        retval: sdkPkg.nativeToScVal([rawBytes]),
+      },
+    });
+
+    const ids = await getAgentIds(10);
+    expect(ids).toHaveLength(1);
+    expect(ids[0]).toBe(pubKey);
+  });
+
+  it('getAgentIdsPage reconstructs Stellar addresses from BytesN<32>', async () => {
+    const pubKey = 'GA7FYRB5CREWMDK2VIKVKWSW7V3YCCU3B3UHBJQ6JZ5OC7V7M5D4T8KJ';
+    const rawBytes = StrKey.decodeEd25519PublicKey(pubKey);
+
+    mockSimulateTransaction.mockResolvedValueOnce({
+      result: {
+        retval: sdkPkg.nativeToScVal([rawBytes]),
+      },
+    });
+
+    const ids = await getAgentIdsPage(0);
+    expect(ids).toHaveLength(1);
+    expect(ids[0]).toBe(pubKey);
   });
 });
 

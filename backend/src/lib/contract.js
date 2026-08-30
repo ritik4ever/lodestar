@@ -770,12 +770,71 @@ function toNumber(value) {
   return Number(value);
 }
 
+/**
+ * Convert a Stellar Ed25519 public key address (G...) to a 32-byte Buffer.
+ *
+ * @param {string|Buffer|Uint8Array} agentAddress
+ * @returns {Buffer} 32-byte raw public key buffer
+ */
+export function addressToBytes32(agentAddress) {
+  if (Buffer.isBuffer(agentAddress)) {
+    return agentAddress;
+  }
+  if (agentAddress instanceof Uint8Array) {
+    return Buffer.from(agentAddress);
+  }
+  if (typeof agentAddress === 'string') {
+    if (agentAddress.startsWith('G')) {
+      return StrKey.decodeEd25519PublicKey(agentAddress);
+    }
+    if (agentAddress.startsWith('C')) {
+      return StrKey.decodeContract(agentAddress);
+    }
+  }
+  if (agentAddress?.toString) {
+    const str = agentAddress.toString();
+    if (str.startsWith('G')) {
+      return StrKey.decodeEd25519PublicKey(str);
+    }
+    if (str.startsWith('C')) {
+      return StrKey.decodeContract(str);
+    }
+  }
+  throw new Error(`Cannot convert address to 32 bytes: ${agentAddress}`);
+}
+
+/**
+ * Convert a 32-byte Buffer / Uint8Array to a Stellar Ed25519 public key address (G...).
+ *
+ * @param {Buffer|Uint8Array|string} bytes - 32-byte public key buffer or address string
+ * @returns {string} Stellar G... address
+ */
+export function bytes32ToAddress(bytes) {
+  if (typeof bytes === 'string' && (bytes.startsWith('G') || bytes.startsWith('C'))) {
+    return bytes;
+  }
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  return StrKey.encodeEd25519PublicKey(buf);
+}
+
 export function mapAgent(raw) {
+  let address = raw.address;
+  if (Buffer.isBuffer(address) || address instanceof Uint8Array) {
+    address = bytes32ToAddress(address);
+  } else if (address?.toString) {
+    address = address.toString();
+  }
+  let owner = raw.owner;
+  if (Buffer.isBuffer(owner) || owner instanceof Uint8Array) {
+    owner = bytes32ToAddress(owner);
+  } else if (owner?.toString) {
+    owner = owner.toString();
+  }
   return {
-    address: raw.address?.toString() ?? raw.address,
+    address: address ?? '',
     name: raw.name,
     description: raw.description,
-    owner: raw.owner?.toString() ?? raw.owner,
+    owner: owner ?? '',
     score: toNumber(raw.score),
     total_payments: String(raw.total_payments),
     successful_payments: String(raw.successful_payments),
@@ -790,8 +849,14 @@ export function mapAgent(raw) {
 }
 
 export function mapPolicy(raw) {
+  let agentAddress = raw.agent_address;
+  if (Buffer.isBuffer(agentAddress) || agentAddress instanceof Uint8Array) {
+    agentAddress = bytes32ToAddress(agentAddress);
+  } else if (agentAddress?.toString) {
+    agentAddress = agentAddress.toString();
+  }
   return {
-    agent_address: raw.agent_address?.toString() ?? raw.agent_address,
+    agent_address: agentAddress ?? '',
     max_per_tx_stroops: String(raw.max_per_tx_stroops),
     max_per_day_stroops: String(raw.max_per_day_stroops),
     allowed_categories: Array.isArray(raw.allowed_categories) ? raw.allowed_categories : [],
@@ -831,6 +896,42 @@ export async function listAgentsPage(page = 0, pageSize = 20) {
     return vec.map(mapAgent);
   } catch (err) {
     logger.error({ err, page, pageSize }, 'listAgentsPage failed');
+    throw err;
+  }
+}
+
+/**
+ * Fetch raw 32-byte agent IDs list from on-chain contract and reconstruct Stellar addresses.
+ */
+export async function getAgentIds(limit = 50) {
+  try {
+    const contract = getAgentsContract();
+    const op = contract.call('get_agent_ids', nativeToScVal(limit, { type: 'u32' }));
+    const retval = await simulateRead(op);
+    if (!retval) return [];
+    const vec = scValToNative(retval);
+    if (!Array.isArray(vec)) return [];
+    return vec.map((item) => bytes32ToAddress(item));
+  } catch (err) {
+    logger.error({ err }, 'getAgentIds failed');
+    throw err;
+  }
+}
+
+/**
+ * Fetch a single 500-item page of raw 32-byte agent IDs from on-chain contract and reconstruct Stellar addresses.
+ */
+export async function getAgentIdsPage(page = 0) {
+  try {
+    const contract = getAgentsContract();
+    const op = contract.call('get_agent_ids_page', nativeToScVal(page, { type: 'u32' }));
+    const retval = await simulateRead(op);
+    if (!retval) return [];
+    const vec = scValToNative(retval);
+    if (!Array.isArray(vec)) return [];
+    return vec.map((item) => bytes32ToAddress(item));
+  } catch (err) {
+    logger.error({ err, page }, 'getAgentIdsPage failed');
     throw err;
   }
 }

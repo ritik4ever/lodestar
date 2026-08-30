@@ -1,8 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, vec,
-    Address, Env, IntoVal, String, Symbol, Vec,
+    contract, contractimpl, contracttype, vec, Address, Bytes, BytesN, Env, IntoVal, String,
+    Symbol, Vec,
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -18,6 +18,7 @@ const INITIAL_SCORE: i32 = 100;
 const SCORE_SUCCESS: i32 = 10;
 const SCORE_FAILURE: i32 = -25;
 const FLAG_PENALTY: i32 = -200;
+pub const AGENT_IDS_PAGE_SIZE: u32 = 500;
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 #[contracttype]
@@ -25,6 +26,7 @@ const FLAG_PENALTY: i32 = -200;
 pub enum DataKey {
     AgentCount,
     AgentIds,
+    AgentIdsBytesPage(u32),
     Agent(Address),
     Policy(Address),
     RegistryContract,
@@ -92,6 +94,123 @@ pub struct ScoringConfig {
     pub flag_penalty: i32,
 }
 
+// ── Address <-> BytesN<32> Conversion Helpers ─────────────────────────────
+fn decode_base32_char(c: u8) -> u8 {
+    match c {
+        b'A'..=b'Z' => c - b'A',
+        b'2'..=b'7' => c - b'2' + 26,
+        _ => 0,
+    }
+}
+
+const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+fn crc16_xmodem(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0;
+    for &byte in data {
+        let mut code = (crc >> 8) ^ (byte as u16);
+        code ^= code >> 4;
+        crc = (crc << 8) ^ (code << 12) ^ (code << 5) ^ code;
+    }
+    crc
+}
+
+pub fn address_to_bytes32(env: &Env, address: &Address) -> BytesN<32> {
+    let strkey = address.to_string();
+    if strkey.len() != 56 {
+        panic!("unexpected address strkey length");
+    }
+    let mut str_bytes = [0u8; 56];
+    strkey.copy_into_slice(&mut str_bytes);
+
+    let mut decoded = [0u8; 35];
+    let mut buffer: u32 = 0;
+    let mut bits_left: u32 = 0;
+    let mut byte_idx: usize = 0;
+
+    for &c in str_bytes.iter() {
+        let val = decode_base32_char(c) as u32;
+        buffer = (buffer << 5) | val;
+        bits_left += 5;
+        if bits_left >= 8 {
+            bits_left -= 8;
+            if byte_idx < 35 {
+                decoded[byte_idx] = ((buffer >> bits_left) & 0xff) as u8;
+                byte_idx += 1;
+            }
+        }
+    }
+
+    let mut raw_32 = [0u8; 32];
+    for i in 0..32 {
+        raw_32[i] = decoded[1 + i];
+    }
+
+    BytesN::from_array(env, &raw_32)
+}
+
+fn bytes32_to_address_with_version(env: &Env, bytes: &BytesN<32>, version: u8) -> Address {
+    let raw_32 = bytes.to_array();
+    let mut payload = [0u8; 33];
+    payload[0] = version;
+    for i in 0..32 {
+        payload[1 + i] = raw_32[i];
+    }
+
+    let checksum = crc16_xmodem(&payload);
+    let mut full = [0u8; 35];
+    for i in 0..33 {
+        full[i] = payload[i];
+    }
+    full[33] = (checksum & 0xff) as u8;
+    full[34] = ((checksum >> 8) & 0xff) as u8;
+
+    let mut str_bytes = [0u8; 56];
+    let mut buffer: u32 = 0;
+    let mut bits_left: u32 = 0;
+    let mut char_idx: usize = 0;
+
+    for &b in full.iter() {
+        buffer = (buffer << 8) | (b as u32);
+        bits_left += 8;
+        while bits_left >= 5 {
+            bits_left -= 5;
+            if char_idx < 56 {
+                let idx = ((buffer >> bits_left) & 0x1f) as usize;
+                str_bytes[char_idx] = BASE32_ALPHABET[idx];
+                char_idx += 1;
+            }
+        }
+    }
+    if bits_left > 0 && char_idx < 56 {
+        let idx = ((buffer << (5 - bits_left)) & 0x1f) as usize;
+        str_bytes[char_idx] = BASE32_ALPHABET[idx];
+    }
+
+    let strkey = String::from_bytes(env, &str_bytes);
+    Address::from_string(&strkey)
+}
+
+pub fn bytes32_to_address(env: &Env, bytes: &BytesN<32>) -> Address {
+    let addr_account = bytes32_to_address_with_version(env, bytes, 0x30);
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::Agent(addr_account.clone()))
+    {
+        return addr_account;
+    }
+    let addr_contract = bytes32_to_address_with_version(env, bytes, 0x10);
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::Agent(addr_contract.clone()))
+    {
+        return addr_contract;
+    }
+    addr_account
+}
+
 // ── Contract ─────────────────────────────────────────────────────────────────
 #[contract]
 pub struct LodestarAgents;
@@ -100,10 +219,7 @@ pub struct LodestarAgents;
 impl LodestarAgents {
     /// Get the current daily spent amount and reset it if a new day has started.
     /// Returns (daily_spent_stroops, last_reset_ledger) for the current day.
-    fn get_daily_spend_with_reset(
-        env: &Env,
-        policy: &SpendingPolicy,
-    ) -> (i128, u64) {
+    fn get_daily_spend_with_reset(env: &Env, policy: &SpendingPolicy) -> (i128, u64) {
         let now = env.ledger().sequence() as u64;
         if now >= policy.last_reset_ledger + DAY_LEDGERS {
             (0i128, now)
@@ -159,7 +275,6 @@ impl LodestarAgents {
         description: String,
         owner: Address,
     ) -> u64 {
-
         let key = DataKey::Agent(agent_address.clone());
         if env.storage().persistent().has(&key) {
             panic!("agent already registered");
@@ -185,28 +300,42 @@ impl LodestarAgents {
         };
 
         env.storage().persistent().set(&key, &entry);
-        env.storage().persistent().extend_ttl(&key, MAX_TTL, MAX_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MAX_TTL, MAX_TTL);
 
-        // Update agent IDs list
+        // Update count
+        let count_key = DataKey::AgentCount;
+        let count: u64 = env.storage().persistent().get(&count_key).unwrap_or(0u64);
+
+        // Update agent IDs list (32-byte raw public key chunked into 500-item pages)
+        let agent_bytes = address_to_bytes32(&env, &agent_address);
+
+        let page_idx = (count / (AGENT_IDS_PAGE_SIZE as u64)) as u32;
+        let page_key = DataKey::AgentIdsBytesPage(page_idx);
+        let mut page: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&page_key)
+            .unwrap_or_else(|| vec![&env]);
+        page.push_back(agent_bytes.clone());
+        env.storage().persistent().set(&page_key, &page);
+        env.storage()
+            .persistent()
+            .extend_ttl(&page_key, MAX_TTL, MAX_TTL);
+
         let ids_key = DataKey::AgentIds;
-        let mut ids: Vec<Address> = env
+        let mut ids: Vec<BytesN<32>> = env
             .storage()
             .persistent()
             .get(&ids_key)
             .unwrap_or_else(|| vec![&env]);
-        ids.push_back(agent_address.clone());
+        ids.push_back(agent_bytes);
         env.storage().persistent().set(&ids_key, &ids);
         env.storage()
             .persistent()
             .extend_ttl(&ids_key, MAX_TTL, MAX_TTL);
 
-        // Update count
-        let count_key = DataKey::AgentCount;
-        let count: u64 = env
-            .storage()
-            .persistent()
-            .get(&count_key)
-            .unwrap_or(0u64);
         let new_count = count + 1;
         env.storage().persistent().set(&count_key, &new_count);
         env.storage()
@@ -216,8 +345,8 @@ impl LodestarAgents {
         // Default spending policy
         let policy = SpendingPolicy {
             agent_address: agent_address.clone(),
-            max_per_tx_stroops: 10_000_000_000i128,   // 1,000,000 USDC stroops
-            max_per_day_stroops: 100_000_000_000i128,  // 10,000,000 USDC stroops
+            max_per_tx_stroops: 10_000_000_000i128, // 1,000,000 USDC stroops
+            max_per_day_stroops: 100_000_000_000i128, // 10,000,000 USDC stroops
             allowed_categories: vec![&env],
             min_score_to_earn: 0,
             daily_spent_stroops: 0,
@@ -242,7 +371,11 @@ impl LodestarAgents {
     // Get spending policy with automatic daily reset
     pub fn get_policy(env: Env, agent_address: Address) -> Option<SpendingPolicy> {
         let key = DataKey::Policy(agent_address.clone());
-        if let Some(mut policy) = env.storage().persistent().get::<DataKey, SpendingPolicy>(&key) {
+        if let Some(mut policy) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, SpendingPolicy>(&key)
+        {
             let (daily_spent, last_reset) = Self::get_daily_spend_with_reset(&env, &policy);
             policy.daily_spent_stroops = daily_spent;
             policy.last_reset_ledger = last_reset;
@@ -279,13 +412,13 @@ impl LodestarAgents {
 
     // Check if a transaction is allowed under the spending policy
     // Returns true if allowed, false otherwise
-    pub fn check_spending_allowed(
-        env: Env,
-        agent_address: Address,
-        amount_stroops: i128,
-    ) -> bool {
+    pub fn check_spending_allowed(env: Env, agent_address: Address, amount_stroops: i128) -> bool {
         let key = DataKey::Policy(agent_address.clone());
-        let policy = match env.storage().persistent().get::<DataKey, SpendingPolicy>(&key) {
+        let policy = match env
+            .storage()
+            .persistent()
+            .get::<DataKey, SpendingPolicy>(&key)
+        {
             Some(p) => p,
             None => return false,
         };
@@ -495,9 +628,7 @@ impl LodestarAgents {
             panic!("unauthorized");
         }
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Admin, &new_admin);
+        env.storage().persistent().set(&DataKey::Admin, &new_admin);
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Admin, MAX_TTL, MAX_TTL);
@@ -505,23 +636,39 @@ impl LodestarAgents {
 
     // List agents (paginated by limit)
     pub fn list_agents(env: Env, limit: u32) -> Vec<AgentEntry> {
-        let ids_key = DataKey::AgentIds;
-        let ids: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&ids_key)
-            .unwrap_or_else(|| vec![&env]);
-
+        let count = Self::get_agent_count(env.clone());
+        let max = (limit as usize).min(count as usize);
         let mut result: Vec<AgentEntry> = vec![&env];
-        let max = (limit as usize).min(ids.len() as usize);
+
         for i in 0..max {
-            let addr = ids.get(i as u32).unwrap();
-            if let Some(agent) = env
+            let page_idx = (i / (AGENT_IDS_PAGE_SIZE as usize)) as u32;
+            let offset = (i % (AGENT_IDS_PAGE_SIZE as usize)) as u32;
+            let page_key = DataKey::AgentIdsBytesPage(page_idx);
+            let bytes_opt: Option<BytesN<32>> = if let Some(page) =
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, Vec<BytesN<32>>>(&page_key)
+            {
+                page.get(offset)
+            } else if let Some(ids) = env
                 .storage()
                 .persistent()
-                .get::<DataKey, AgentEntry>(&DataKey::Agent(addr))
+                .get::<DataKey, Vec<BytesN<32>>>(&DataKey::AgentIds)
             {
-                result.push_back(agent);
+                ids.get(i as u32)
+            } else {
+                None
+            };
+
+            if let Some(bytes) = bytes_opt {
+                let addr = bytes32_to_address(&env, &bytes);
+                if let Some(agent) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, AgentEntry>(&DataKey::Agent(addr))
+                {
+                    result.push_back(agent);
+                }
             }
         }
         result
@@ -529,31 +676,71 @@ impl LodestarAgents {
 
     // List a single page of agents in registration order (avoids O(n) reads for large sets)
     pub fn list_agents_page(env: Env, page: u32, page_size: u32) -> Vec<AgentEntry> {
-        let ids_key = DataKey::AgentIds;
-        let ids: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&ids_key)
-            .unwrap_or_else(|| vec![&env]);
-
-        let mut result: Vec<AgentEntry> = vec![&env];
-        let total = ids.len() as usize;
+        let count = Self::get_agent_count(env.clone());
+        let total = count as usize;
         let start = (page as usize).saturating_mul(page_size as usize);
+        let mut result: Vec<AgentEntry> = vec![&env];
         if start >= total {
             return result;
         }
         let end = (start + page_size as usize).min(total);
         for i in start..end {
-            let addr = ids.get(i as u32).unwrap();
-            if let Some(agent) = env
+            let page_idx = (i / (AGENT_IDS_PAGE_SIZE as usize)) as u32;
+            let offset = (i % (AGENT_IDS_PAGE_SIZE as usize)) as u32;
+            let page_key = DataKey::AgentIdsBytesPage(page_idx);
+            let bytes_opt: Option<BytesN<32>> = if let Some(page) =
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, Vec<BytesN<32>>>(&page_key)
+            {
+                page.get(offset)
+            } else if let Some(ids) = env
                 .storage()
                 .persistent()
-                .get::<DataKey, AgentEntry>(&DataKey::Agent(addr))
+                .get::<DataKey, Vec<BytesN<32>>>(&DataKey::AgentIds)
             {
-                result.push_back(agent);
+                ids.get(i as u32)
+            } else {
+                None
+            };
+
+            if let Some(bytes) = bytes_opt {
+                let addr = bytes32_to_address(&env, &bytes);
+                if let Some(agent) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, AgentEntry>(&DataKey::Agent(addr))
+                {
+                    result.push_back(agent);
+                }
             }
         }
         result
+    }
+
+    // Get raw 32-byte agent IDs list (paginated by limit)
+    pub fn get_agent_ids(env: Env, limit: u32) -> Vec<BytesN<32>> {
+        let ids: Vec<BytesN<32>> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AgentIds)
+            .unwrap_or_else(|| vec![&env]);
+        let mut result: Vec<BytesN<32>> = vec![&env];
+        let max = (limit as usize).min(ids.len() as usize);
+        for i in 0..max {
+            if let Some(id) = ids.get(i as u32) {
+                result.push_back(id);
+            }
+        }
+        result
+    }
+
+    // Get a single 500-item page of raw 32-byte agent IDs
+    pub fn get_agent_ids_page(env: Env, page: u32) -> Vec<BytesN<32>> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AgentIdsBytesPage(page))
+            .unwrap_or_else(|| vec![&env])
     }
 
     // Get total agent count
@@ -664,15 +851,15 @@ mod test {
     fn setup_with_registry(env: &Env) -> (Address, Address) {
         // Deploy mock registry
         let registry_id = env.register_contract(None, MockRegistry);
-        
+
         // Deploy agents contract with admin
         let admin = Address::generate(env);
         let contract_id = env.register(LodestarAgents, (admin.clone(),));
         let client = LodestarAgentsClient::new(env, &contract_id);
-        
+
         // Initialize with registry
         client.init(&registry_id);
-        
+
         (contract_id, admin)
     }
 
@@ -709,11 +896,7 @@ mod test {
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
         assert!(client
-            .try_flag_agent(
-                &agent_addr,
-                &String::from_str(&env, "bad behavior"),
-                &owner,
-            )
+            .try_flag_agent(&agent_addr, &String::from_str(&env, "bad behavior"), &owner,)
             .is_err());
     }
 
@@ -840,11 +1023,7 @@ mod test {
 
         let caller = Address::generate(&env);
         assert!(client
-            .try_flag_agent(
-                &agent_addr,
-                &String::from_str(&env, "reason"),
-                &caller,
-            )
+            .try_flag_agent(&agent_addr, &String::from_str(&env, "reason"), &caller,)
             .is_err());
     }
 
@@ -864,11 +1043,7 @@ mod test {
         // Clear auths so require_auth in flag_agent fails
         env.set_auths(&[]);
         assert!(client
-            .try_flag_agent(
-                &agent_addr,
-                &String::from_str(&env, "reason"),
-                &admin,
-            )
+            .try_flag_agent(&agent_addr, &String::from_str(&env, "reason"), &admin,)
             .is_err());
     }
 
@@ -943,15 +1118,32 @@ mod test {
         });
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Seed non-zero daily spend so a reset is detectable
         let seeded_spend = 500i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            seeded_spend,
+            max_per_day,
+        );
 
         // Confirm seed is in storage
         let p = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(p.daily_spent_stroops, seeded_spend, "seed should be in storage");
+        assert_eq!(
+            p.daily_spent_stroops, seeded_spend,
+            "seed should be in storage"
+        );
         assert_eq!(p.last_reset_ledger, start_ledger as u64);
 
         // ── One ledger BEFORE threshold — spend must be preserved ──────────
@@ -1009,11 +1201,25 @@ mod test {
         });
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Seed non-zero daily spend
         let seeded_spend = 300i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            seeded_spend,
+            max_per_day,
+        );
 
         // ── One before threshold: no reset ──────────────────────────────────
         let one_before = start_ledger + DAY_LEDGERS as u32 - 1;
@@ -1070,11 +1276,25 @@ mod test {
         });
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Seed non-zero spend
         let seeded_spend = 400i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            seeded_spend,
+            max_per_day,
+        );
 
         let p = client.get_policy(&agent_addr).unwrap();
         assert_eq!(p.daily_spent_stroops, seeded_spend);
@@ -1087,7 +1307,14 @@ mod test {
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
         let p_mid = client.get_policy(&agent_addr).unwrap();
         assert_eq!(
             p_mid.daily_spent_stroops, seeded_spend,
@@ -1102,7 +1329,14 @@ mod test {
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         let p_after = client.get_policy(&agent_addr).unwrap();
         assert_eq!(
@@ -1137,7 +1371,14 @@ mod test {
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Confirm initial last_reset_ledger = start_ledger (register_agent and
         // update_policy both run at start_ledger = 1)
@@ -1146,7 +1387,14 @@ mod test {
 
         // Seed spend for day 1
         let spend_day1 = 200i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, spend_day1, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            spend_day1,
+            max_per_day,
+        );
 
         // ── Day 2: first DAY_LEDGERS boundary ───────────────────────────────
         let day2_ledger = start_ledger + DAY_LEDGERS as u32;
@@ -1170,12 +1418,17 @@ mod test {
         let key = DataKey::Policy(agent_addr.clone());
         env.as_contract(&contract_id, || {
             let current: SpendingPolicy = env.storage().persistent().get(&key).unwrap();
-            env.storage().persistent().set(&key, &SpendingPolicy {
-                daily_spent_stroops: 150i128,
-                last_reset_ledger: day2_ledger as u64,
-                ..current
-            });
-            env.storage().persistent().extend_ttl(&key, TEST_MAX_TTL, TEST_MAX_TTL);
+            env.storage().persistent().set(
+                &key,
+                &SpendingPolicy {
+                    daily_spent_stroops: 150i128,
+                    last_reset_ledger: day2_ledger as u64,
+                    ..current
+                },
+            );
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TEST_MAX_TTL, TEST_MAX_TTL);
         });
 
         // ── Day 3: second DAY_LEDGERS boundary ──────────────────────────────
@@ -1215,11 +1468,25 @@ mod test {
         });
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Seed non-zero spend
         let seeded_spend = 750i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            seeded_spend,
+            max_per_day,
+        );
 
         // Advance to exactly one ledger before the threshold — must NOT reset
         let one_before = start_ledger + DAY_LEDGERS as u32 - 1;
@@ -1263,8 +1530,8 @@ mod test {
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
         let max_per_day = 1000i128;
-        let max_per_tx = 1000i128; 
-        
+        let max_per_tx = 1000i128;
+
         env.ledger().with_mut(|li| {
             li.sequence_number = 1;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1291,8 +1558,79 @@ mod test {
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        
+
         // Should allow full amount again after reset
         assert!(client.check_spending_allowed(&agent_addr, &1000));
+    }
+
+    #[test]
+    fn test_list_agents_reconstruction() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr1 = Address::generate(&env);
+        let owner1 = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr1, &owner1);
+
+        let agent_addr2 = Address::generate(&env);
+        let owner2 = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr2, &owner2);
+
+        let agents = client.list_agents(&10);
+        assert_eq!(agents.len(), 2);
+        assert_eq!(
+            agents.get(0).unwrap().name,
+            String::from_str(&env, "Test Agent")
+        );
+        assert_eq!(
+            agents.get(1).unwrap().name,
+            String::from_str(&env, "Test Agent")
+        );
+    }
+
+    #[test]
+    fn test_list_agents_page_chunking() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr1 = Address::generate(&env);
+        let owner1 = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr1, &owner1);
+
+        let agent_addr2 = Address::generate(&env);
+        let owner2 = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr2, &owner2);
+
+        let page0 = client.list_agents_page(&0, &1);
+        assert_eq!(page0.len(), 1);
+
+        let page1 = client.list_agents_page(&1, &1);
+        assert_eq!(page1.len(), 1);
+
+        let page2 = client.list_agents_page(&2, &1);
+        assert_eq!(page2.len(), 0);
+    }
+
+    #[test]
+    fn test_get_agent_ids_and_pages() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        let ids = client.get_agent_ids(&10);
+        assert_eq!(ids.len(), 1);
+
+        let page0_ids = client.get_agent_ids_page(&0);
+        assert_eq!(page0_ids.len(), 1);
+        assert_eq!(ids.get(0).unwrap(), page0_ids.get(0).unwrap());
     }
 }

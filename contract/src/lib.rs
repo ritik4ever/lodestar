@@ -33,6 +33,8 @@ pub struct ServiceEntry {
 #[contracttype]
 pub enum DataKey {
     Counter,
+    // Stores a compact Vec<u64> of service IDs. Encoded directly as 8-byte u64 ScVal integers
+    // (~8,000 services before 64KB persistent storage limit) avoiding heavy wrapper overhead.
     ServiceIds,
     Service(u64),
     ServiceIdsByCategory(String),
@@ -122,14 +124,8 @@ impl LodestarRegistry {
             endpoint.len() <= 256,
             "endpoint must be at most 256 characters"
         );
-        assert!(
-            category.len() >= 1,
-            "category must be 1-32 characters"
-        );
-        assert!(
-            category.len() <= 32,
-            "category must be 1-32 characters"
-        );
+        assert!(category.len() >= 1, "category must be 1-32 characters");
+        assert!(category.len() <= 32, "category must be 1-32 characters");
 
         assert!(
             !active_service_exists(&env, &provider, &endpoint),
@@ -268,12 +264,12 @@ impl LodestarRegistry {
 
     /// List a single page of services in registration order, filtering only active services.
     /// This avoids the pagination bug where inactive services cause short pages.
-    /// 
+    ///
     /// Unlike list_services, this function ensures that every page except the last
     /// contains exactly page_size entries when enough active services exist.
     pub fn list_services_page(env: Env, page: u32, page_size: u32) -> Vec<ServiceEntry> {
         let page_size = page_size.min(20u32).max(1u32);
-        
+
         let ids: Vec<u64> = env
             .storage()
             .persistent()
@@ -670,7 +666,7 @@ mod test {
 
         env.clone().as_contract(&contract_id, || {
             let provider = Address::generate(&env);
-            
+
             // Register 5 active services
             for i in 1..=5 {
                 setup_service(&env, i, &provider, "compute", 0, true);
@@ -702,7 +698,7 @@ mod test {
 
         env.clone().as_contract(&contract_id, || {
             let provider = Address::generate(&env);
-            
+
             // Register services with alternating active/inactive pattern
             // IDs 1,3,5,7,9 are active; IDs 2,4,6,8,10 are inactive
             for i in 1..=10 {
@@ -738,7 +734,7 @@ mod test {
 
         env.clone().as_contract(&contract_id, || {
             let provider = Address::generate(&env);
-            
+
             // Register 3 inactive services
             for i in 1..=3 {
                 setup_service(&env, i, &provider, "compute", 0, false);
@@ -769,7 +765,7 @@ mod test {
 
         env.clone().as_contract(&contract_id, || {
             let provider = Address::generate(&env);
-            
+
             // Register 5 active services
             for i in 1..=5 {
                 setup_service(&env, i, &provider, "compute", 0, true);
