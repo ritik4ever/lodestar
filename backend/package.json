@@ -13,7 +13,10 @@
     "seed": "node scripts/seed.js",
     "seed-agents": "node scripts/seed-agents.js",
     "update-endpoints": "node scripts/update-endpoints.js",
-    "bench": "node src/lib/idempotency.bench.js"
+    "bench": "node src/lib/idempotency.bench.js",
+    "load:k6": "k6 run load-tests/read-heavy.k6.js",
+    "load:autocannon": "node load-tests/run-autocannon.js",
+    "load:autocannon:ci": "node load-tests/run-autocannon.js --connections 50 --duration 20"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.0.1",
@@ -27,12 +30,16 @@
     "ioredis": "^5.11.1",
     "node-fetch": "^3.3.2",
     "p-queue": "^9.3.0",
-    "pino": "^9.3.2"
+    "pino": "^9.3.2",
+    "pino-http": "^10.5.0",
+    "pino-pretty": "^11.2.2",
+    "rate-limit-redis": "^6.0.0"
   },
   "engines": {
     "node": ">=22.0.0"
   },
   "devDependencies": {
+    "autocannon": "^8.0.0",
     "ioredis-mock": "^8.13.1",
     "supertest": "^7.2.2",
     "vitest": "^1.6.1"
