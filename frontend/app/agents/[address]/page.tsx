@@ -356,7 +356,7 @@ export default function AgentProfilePage() {
         <MetaItem label="Total volume" value={`$${totalVolumeUsdc} USDC`} />
         <MetaItem label="Registered at ledger" value={`#${Number(agent.registered_at).toLocaleString()}`} />
         <MetaItem label="Last active at ledger" value={`#${Number(agent.last_active).toLocaleString()}`} />
-        <MetaItem label="Owner" value={`${agent.owner.slice(0, 6)}…${agent.owner.slice(-4)}`} mono />
+        <MetaItem label="Owner" value={agent.owner ? `${agent.owner.slice(0, 6)}…${agent.owner.slice(-4)}` : '—'} mono />
       </div>
     </div>
   );

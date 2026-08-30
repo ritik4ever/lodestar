@@ -1,40 +1,22 @@
-export type Category = 'search' | 'weather' | 'finance' | 'ai' | 'data' | 'compute';
-
-export interface ServiceEntry {
-  id: number;
-  name: string;
-  description: string;
-  endpoint: string;
-  price_usdc: string;
-  category: Category;
-  provider: string;
-  reputation: number;
-  active: boolean;
-  registered_at: number;
-  ttl_warning?: boolean;
-}
+export type {
+  Category,
+  ServiceEntry,
+  ServicesResponse,
+  StatsResponse,
+  ReputationResponse,
+  AgentEntry,
+  SpendingPolicy,
+  AgentSortOption,
+  AgentsResponse,
+  AgentStats,
+  AgentEligibilityResponse,
+  AgentSpendCheckResponse,
+} from '../../packages/client/index.js';
 
 export interface ApiResponse<T> {
   data?: T;
   error?: string;
   code?: string;
-}
-
-export interface StatsResponse {
-  totalServices: number;
-  categories: Category[];
-  latestService: ServiceEntry | null;
-}
-
-export interface ServicesResponse {
-  services: ServiceEntry[];
-  count: number;
-}
-
-export interface ReputationResponse {
-  success: boolean;
-  newReputation: number;
-  txHash?: string;
 }
 
 export interface ActivityEntry {
@@ -84,63 +66,8 @@ export const TIER_COLORS: Record<ScoreTier, string> = {
   elite: 'text-amber-600 bg-amber-50',
 };
 
-export interface AgentEntry {
-  address: string;
-  name: string;
-  description: string;
-  owner: string;
-  score: number;
-  total_payments: string;
-  successful_payments: string;
-  failed_payments: string;
-  total_volume_stroops: string;
-  registered_at: string;
-  last_active: string;
-  active: boolean;
-  flagged: boolean;
-  flag_reason: string;
-}
-
-export interface SpendingPolicy {
-  agent_address: string;
-  max_per_tx_stroops: string;
-  max_per_day_stroops: string;
-  allowed_categories: string[];
-  min_score_to_earn: number;
-  daily_spent_stroops: string;
-  last_reset_ledger: string;
-}
-
-export type AgentSortOption = 'score' | 'payments' | 'newest';
-
-export interface AgentsResponse {
-  agents: AgentEntry[];
-  total: number;
-  page: number;
-  pageSize: number;
-}
-
 export interface AgentRegisterRequest {
   agentAddress: string;
   name: string;
   description: string;
-}
-
-export interface AgentStats {
-  totalAgents: number;
-  avgScore: number;
-  topAgent: AgentEntry | null;
-  totalVolume: string;
-  totalVolumeStroops: string;
-}
-
-export interface AgentEligibilityResponse {
-  eligible: boolean;
-  score: number;
-  required: number;
-}
-
-export interface AgentSpendCheckResponse {
-  allowed: boolean;
-  reason: string;
 }

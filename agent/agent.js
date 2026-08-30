@@ -10,6 +10,7 @@ import { createEd25519Signer } from '@x402/stellar';
 import { ExactStellarScheme } from '@x402/stellar/exact/client';
 import { buildRunSummary, writeRunSummary } from './runSummary.js';
 import { stroopsToUsdcDisplay } from '../packages/stroops/index.js';
+import { createClient } from '../packages/client/index.js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -120,81 +121,77 @@ export const EVENT = {
 
 // ── Credit scoring helpers ────────────────────────────────────────────────────
 
+const apiClient = createClient({
+  baseUrl: LODESTAR_API_URL,
+  timeoutMs: FETCH_TIMEOUT_MS,
+});
+
 let currentScore = null;
 
 export async function ensureRegistered() {
   try {
-    const res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}`);
-    if (res.status === 503) {
+    const data = await apiClient.getAgent(AGENT_ADDRESS);
+    const agent = data.agent ?? data;
+    currentScore = agent.score;
+    const policy = data.policy;
+    const dailyLimitUsdc = policy
+      ? stroopsToUsdcDisplay(policy.max_per_day_stroops)
+      : null;
+    logger.info(
+      { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, score: agent.score, dailyLimitUsdc, scoringEnabled: true },
+      'Already registered'
+    );
+    return true;
+  } catch (err) {
+    if (err.status === 503) {
       logger.info(
         { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, scoringEnabled: false },
         'Agents contract not deployed — scoring disabled'
       );
       return false;
     }
-    if (res.ok) {
-      const data = await res.json();
-      const agent = data.agent ?? data;
-      currentScore = agent.score;
-      const policy = data.policy;
-      const dailyLimitUsdc = policy
-        ? stroopsToUsdcDisplay(policy.max_per_day_stroops)
-        : null;
-      logger.info(
-        { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, score: agent.score, dailyLimitUsdc, scoringEnabled: true },
-        'Already registered'
-      );
-      return true;
-    }
-    if (res.status === 404) {
+    if (err.status === 404) {
       logger.info(
         { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS },
         'Not registered — registering now…'
       );
-      const regRes = await fetchWithTimeout(`${LODESTAR_API_URL}/api/agents/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      try {
+        await apiClient.registerAgent({
           agentAddress: AGENT_ADDRESS,
           name: AGENT_NAME,
           description: AGENT_DESC,
           maxPerTxUsdc: MAX_PER_TX,
           maxPerDayUsdc: MAX_PER_DAY,
           allowedCategories: ALLOWED_CATS,
-        }),
-      });
-      if (regRes.ok) {
+        });
         currentScore = 100;
         logger.info(
           { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, score: 100, scoringEnabled: true },
           'Registered — starting score: 100'
         );
         return true;
+      } catch (regErr) {
+        logger.warn(
+          { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, scoringEnabled: false, err: regErr.body || regErr.message },
+          'Registration failed — scoring disabled'
+        );
+        return false;
       }
-      const err = await regRes.json().catch(() => ({}));
-      logger.warn(
-        { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, scoringEnabled: false, err },
-        'Registration failed — scoring disabled'
-      );
-      return false;
     }
-  } catch (err) {
     logger.warn(
       { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, scoringEnabled: false, err },
       'Could not reach agents API — scoring disabled'
     );
+    return false;
   }
-  return false;
 }
 
 async function checkSpend(amountUsdc, category) {
   try {
-    const res = await fetchWithTimeout(
-      `${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}/can-spend` +
-      `?amount=${encodeURIComponent(amountUsdc)}&category=${encodeURIComponent(category)}`
-    );
-    if (!res.ok) return { allowed: true, reason: 'OK' };
-    return await res.json();
+    return await apiClient.checkAgentCanSpend(AGENT_ADDRESS, {
+      amount: amountUsdc,
+      category,
+    });
   } catch {
     return { allowed: true, reason: 'OK' };
   }
@@ -202,21 +199,20 @@ async function checkSpend(amountUsdc, category) {
 
 async function recordOutcome(amountUsdc, success, serviceId) {
   try {
-    const body = JSON.stringify({ amountUsdc, success, serviceId });
-    const headers = { 'Content-Type': 'application/json' };
+    const headers = {};
     if (LODESTAR_HMAC_SECRET) {
+      const body = JSON.stringify({ amountUsdc, success, serviceId });
       headers['X-Lodestar-Signature'] = crypto
         .createHmac('sha256', LODESTAR_HMAC_SECRET)
         .update(body)
         .digest('hex');
     }
-    const res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}/payment`, {
-      method: 'POST',
-      headers,
-      body,
-    });
-    if (res.ok) {
-      const data = await res.json();
+    const data = await apiClient.recordAgentPayment(
+      AGENT_ADDRESS,
+      { amountUsdc, success, serviceId },
+      { headers }
+    );
+    if (data && data.newScore !== undefined) {
       const scoreBefore = currentScore;
       currentScore = data.newScore;
       logger.info(
@@ -274,22 +270,13 @@ function buildHttpClient() {
 // ── Registry helpers ──────────────────────────────────────────────────────────
 
 async function fetchServices(category) {
-  const res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/services?category=${category}`);
-  if (!res.ok) throw new Error(`Registry fetch failed: ${res.status}`);
-  const body = await res.json();
-  return body.services ?? [];
+  const data = await apiClient.getServices({ category });
+  return data.services ?? [];
 }
 
 async function submitReputation(id, positive) {
   try {
-    const res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/reputation/${id}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ positive, agent: AGENT_ADDRESS }),
-    });
-    if (!res.ok) {
-      logger.debug({ status: res.status }, 'Reputation vote not applied (best-effort)');
-    }
+    await apiClient.submitReputation(id, { positive, agent: AGENT_ADDRESS });
   } catch {
     // Intentionally best-effort — a failed vote must not abort the agent run.
   }

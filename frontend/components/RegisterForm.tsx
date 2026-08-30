@@ -62,16 +62,17 @@ function validate(f: FormState): Record<string, string> {
 
 export default function RegisterForm({ walletAddress }: Props) {
   const [form, setForm]     = useState<FormState>(EMPTY);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>(() => validate(EMPTY));
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [pendingTx, setPendingTx] = useState<{ txHash: string } | null>(null);
   const [result, setResult] = useState<{ txHash: string; id: number } | null>(null);
   const [submitError, setSubmitError] = useState('');
 
   function set(field: keyof FormState, value: string) {
-    setForm((prev) => ({ ...prev, [field]: value }));
-    // Validate on change
     const updatedForm = { ...form, [field]: value };
+    setForm(updatedForm);
+    setTouched((prev) => ({ ...prev, [field]: true }));
     const errs = validate(updatedForm);
     setErrors(errs);
   }
@@ -81,6 +82,7 @@ export default function RegisterForm({ walletAddress }: Props) {
     const errs = validate(form);
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
+      setTouched({ name: true, description: true, endpoint: true, price_usdc: true, category: true });
       return;
     }
     setSubmitting(true);
@@ -93,6 +95,8 @@ export default function RegisterForm({ walletAddress }: Props) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       setResult(res);
       setForm(EMPTY);
+      setErrors(validate(EMPTY));
+      setTouched({});
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Registration failed');
     } finally {
@@ -152,66 +156,73 @@ export default function RegisterForm({ walletAddress }: Props) {
   return (
     <form onSubmit={handleSubmit} className="card p-8 space-y-5 fade-in">
       <Field
+        id="service-name"
         label="Service Name"
-        error={errors.name}
+        error={touched.name ? errors.name : undefined}
         hint="3–64 characters"
       >
         <input
+          id="service-name"
           type="text"
           value={form.name}
           onChange={(e) => set('name', e.target.value)}
           placeholder="My Weather API"
           disabled={submitting}
-          className={input(!!errors.name)}
+          className={input(!!(touched.name && errors.name))}
         />
       </Field>
 
       <Field
+        id="service-description"
         label="Description"
-        error={errors.description}
+        error={touched.description ? errors.description : undefined}
         hint="10–256 characters"
       >
         <textarea
+          id="service-description"
           rows={3}
           value={form.description}
           onChange={(e) => set('description', e.target.value)}
           placeholder="Describe what your service does and what data it returns..."
           disabled={submitting}
-          className={input(!!errors.description)}
+          className={input(!!(touched.description && errors.description))}
         />
       </Field>
 
       <Field
+        id="service-endpoint"
         label="Endpoint URL"
-        error={errors.endpoint}
+        error={touched.endpoint ? errors.endpoint : undefined}
         hint="https://, max 256 characters"
       >
         <input
+          id="service-endpoint"
           type="url"
           value={form.endpoint}
           onChange={(e) => set('endpoint', e.target.value)}
           placeholder="https://api.example.com/weather"
           disabled={submitting}
-          className={`mono ${input(!!errors.endpoint)}`}
+          className={`mono ${input(!!(touched.endpoint && errors.endpoint))}`}
         />
       </Field>
 
       <div className="grid grid-cols-2 gap-4">
-        <Field label="Price (USDC)" error={errors.price_usdc} hint="Min 0.0001">
+        <Field id="service-price" label="Price (USDC)" error={touched.price_usdc ? errors.price_usdc : undefined} hint="Min 0.0001">
           <input
-            type="number"
-            step="0.0001"
-            min="0.0001"
+            id="service-price"
+            type="text"
+            inputMode="decimal"
             value={form.price_usdc}
             onChange={(e) => set('price_usdc', e.target.value)}
             placeholder="0.001"
             disabled={submitting}
-            className={`mono ${input(!!errors.price_usdc)}`}
+            className={`mono ${input(!!(touched.price_usdc && errors.price_usdc))}`}
           />
         </Field>
 
-        <Field label="Category" error={errors.category}>
+        <Field id="service-category" label="Category" error={touched.category ? errors.category : undefined}>
           <select
+            id="service-category"
             value={form.category}
             onChange={(e) => set('category', e.target.value as Category)}
             disabled={submitting}
@@ -250,11 +261,13 @@ function input(hasError: boolean) {
 }
 
 function Field({
+  id,
   label,
   error,
   hint,
   children,
 }: {
+  id?: string;
   label: string;
   error?: string;
   hint?: string;
@@ -263,7 +276,7 @@ function Field({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <label className="text-sm font-medium">{label}</label>
+        <label htmlFor={id} className="text-sm font-medium">{label}</label>
         {hint && !error && <span className="text-xs text-secondary">{hint}</span>}
         {error && <span className="text-xs text-error">{error}</span>}
       </div>

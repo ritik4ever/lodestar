@@ -99,7 +99,7 @@ export default function SpendingPolicyDisplay({ policy, walletAddress, agentOwne
   }
 
   const dailyUsed = Number(
-    BigInt(policy.daily_spent_stroops) * 100n /
+    BigInt(policy.daily_spent_stroops || policy.spent_today_stroops || '0') * 100n /
     BigInt(policy.max_per_day_stroops === '0' ? '1' : policy.max_per_day_stroops),
   );
 
@@ -224,7 +224,7 @@ export default function SpendingPolicyDisplay({ policy, walletAddress, agentOwne
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-secondary">Daily spend used</span>
               <span className="mono text-xs text-primary">
-                ${stroopsToUsdc(policy.daily_spent_stroops)} / ${stroopsToUsdc(policy.max_per_day_stroops)} USDC
+                ${stroopsToUsdc(policy.daily_spent_stroops || policy.spent_today_stroops || '0')} / ${stroopsToUsdc(policy.max_per_day_stroops)} USDC
               </span>
             </div>
             <div className="w-full bg-border rounded-full h-1.5">

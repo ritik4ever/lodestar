@@ -40,15 +40,15 @@ export default function StatsBar() {
     <div className="flex flex-wrap justify-center gap-8 sm:gap-16 py-8 border-t border-b border-border">
       <Stat
         label="Total Services"
-        value={stats ? String(stats.totalServices) : '—'}
+        value={stats ? String(stats.total_services ?? stats.totalServices ?? 0) : '—'}
       />
       <Stat
         label="Categories"
-        value={stats ? String(stats.categories.length) : '—'}
+        value={stats ? String(stats.total_categories ?? stats.categories?.length ?? 0) : '—'}
       />
       <Stat
         label="Latest Registration"
-        value={stats?.latestService ? stats.latestService.name : '—'}
+        value={stats?.latestService?.name ?? stats?.top_category ?? '—'}
       />
     </div>
   );

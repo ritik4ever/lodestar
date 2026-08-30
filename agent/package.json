@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@lodestar/client": "file:../packages/client",
     "@stellar/stellar-sdk": "^13.0.0",
     "@x402/core": "^2.9.0",
     "@x402/stellar": "^2.9.0",
