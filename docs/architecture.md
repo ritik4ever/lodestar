@@ -30,6 +30,13 @@ This document covers the component responsibilities, data flow, trust boundaries
 - **Off-chain Heavy Lifting:** The Express backend handles complex x402 negotiation, API proxying, and caching (like the agent leaderboard cache). These operations are computationally expensive or require network access outside the blockchain.
 - **Client-Side Autonomy:** The AI Agents are standalone scripts. This demonstrates true autonomy where the agent operates without hardcoded URLs, fetching all discovery and policy rules dynamically from the contracts.
 
+## Contract Storage
+
+Both contracts key their state with `#[contracttype]` `DataKey` enums. Every key,
+its value type, TTL class and growth characteristics are documented in
+**[Storage Layout](./storage-layout.md)** — the reference for reasoning about
+migration cost, TTL rent, and what a redeploy would have to preserve.
+
 ## Trust Boundaries
 
 - **Providers vs. Registry:** Providers are untrusted. They can register any endpoint. The registry relies on the x402 payment success/failure feedback loop (reputation) from agents to bubble up good services and bury bad ones.

@@ -46,6 +46,13 @@ function buildHttpClient() {
 }
 
 router.post('/demo-run', async (req, res) => {
+  // Wire the abort plumbing once, up front, so a client disconnect propagates
+  // through the WHOLE handler — including the waitForActivityTxHash polling
+  // phase — and not just the fetchWithTx call.
+  const abortController = new AbortController();
+  const onClose = () => abortController.abort();
+  req.on('close', onClose);
+
   try {
     const { serviceId, category } = req.body;
 
@@ -83,12 +90,7 @@ router.post('/demo-run', async (req, res) => {
     const httpClient = buildHttpClient();
     const activityCountBefore = getActivityFeed().length;
 
-    const abortController = new AbortController();
-    const onClose = () => abortController.abort();
-    req.on('close', onClose);
-
     const { response, txHash: fetchedTxHash } = await httpClient.fetchWithTx(finalEndpointUrl, { signal: abortController.signal });
-    req.removeListener('close', onClose);
 
     if (!response.ok) {
       throw new Error(`Service responded with ${response.status}`);
@@ -108,6 +110,9 @@ router.post('/demo-run', async (req, res) => {
       logger.warn({ serviceId, category }, 'Demo run returned empty or error payload — marking data invalid');
     }
 
+    // Poll cost is logged per wait so the RPC budget a wait spends is visible
+    // in production, not just inferred from the backoff settings (#852).
+    let pollSample = null;
     const txHash = fetchedTxHash || (await waitForActivityTxHash(
       getActivityFeed,
       activityCountBefore,
@@ -115,9 +120,27 @@ router.post('/demo-run', async (req, res) => {
         maxWaitMs: config.demoRun.pollMaxWaitMs,
         initialDelayMs: config.demoRun.pollInitialDelayMs,
         maxDelayMs: config.demoRun.pollMaxDelayMs,
+        signal: abortController.signal,
+        onPollSample: (sample) => { pollSample = sample; },
       },
       (entry) => entry.demoRunId === demoRunId,
     ));
+
+    if (pollSample) {
+      logger.info(
+        {
+          event: 'activity_poll_complete',
+          serviceId,
+          category,
+          polls: pollSample.polls,
+          sleeps: pollSample.sleeps,
+          totalDelayMs: pollSample.totalDelayMs,
+          durationMs: pollSample.durationMs,
+          outcome: pollSample.outcome,
+        },
+        'Activity poll finished',
+      );
+    }
     if (!txHash) {
       logger.warn({ serviceId, category, maxWaitMs: config.demoRun.pollMaxWaitMs }, 'Activity txHash not found before poll timeout');
     }
@@ -139,6 +162,8 @@ router.post('/demo-run', async (req, res) => {
     }
     logger.error({ err }, 'POST /api/demo-run failed');
     res.status(500).json({ error: err instanceof Error ? err.message : 'Demo run failed', code: 'DEMO_ERROR' });
+  } finally {
+    req.removeListener('close', onClose);
   }
 });
 

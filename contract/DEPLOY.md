@@ -174,6 +174,21 @@ cd backend && npm run seed-agents
 
 This registers three demo agents (NewAgent ~110, EstablishedAgent ~600, TrustedAgent ~1000) and builds their payment histories on-chain.
 
+## Registration Field Limits
+
+The `register_service` function enforces the following field limits on-chain:
+
+| Field | Min | Max | Notes |
+|-------|-----|-----|-------|
+| `name` | 3 | 64 | |
+| `description` | 10 | 256 | |
+| `endpoint` | — | 256 | |
+| `category` | 1 | 32 | |
+
+Submissions exceeding these limits are rejected with a typed assertion error.
+The same limits are enforced client-side in the RegisterForm and server-side
+by the `POST /api/registry/prepare-register` route.
+
 ## Network Details
 
 - Network: Stellar Testnet

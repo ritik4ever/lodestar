@@ -1,5 +1,11 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/Stellar-Ecosystem/lodestar/security/advisories/new
+    about: Do not open a public issue for vulnerabilities. Report privately here — this is the only accepted channel, and it stays visible to maintainers only.
+  - name: Security policy
+    url: https://github.com/Stellar-Ecosystem/lodestar/blob/main/SECURITY.md
+    about: What is in scope, what to include in a report, and how quickly to expect a response.
   - name: Discussions
     url: https://github.com/Stellar-Ecosystem/lodestar/discussions
     about: Please ask and answer questions here.
