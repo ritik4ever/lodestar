@@ -357,6 +357,60 @@ describe('POST /api/registry/prepare-register', () => {
       },
     ],
     [
+      'priceUsdc (empty string)',
+      {
+        name: 'Weather Oracle',
+        description: 'Real-time weather data for autonomous agents.',
+        endpoint: 'https://weather.example.com',
+        priceUsdc: '',
+        category: 'weather',
+        providerAddress: VALID_PROVIDER,
+      },
+    ],
+    [
+      'priceUsdc (whitespace)',
+      {
+        name: 'Weather Oracle',
+        description: 'Real-time weather data for autonomous agents.',
+        endpoint: 'https://weather.example.com',
+        priceUsdc: '  0.001',
+        category: 'weather',
+        providerAddress: VALID_PROVIDER,
+      },
+    ],
+    [
+      'priceUsdc (negative)',
+      {
+        name: 'Weather Oracle',
+        description: 'Real-time weather data for autonomous agents.',
+        endpoint: 'https://weather.example.com',
+        priceUsdc: '-0.001',
+        category: 'weather',
+        providerAddress: VALID_PROVIDER,
+      },
+    ],
+    [
+      'priceUsdc (missing)',
+      {
+        name: 'Weather Oracle',
+        description: 'Real-time weather data for autonomous agents.',
+        endpoint: 'https://weather.example.com',
+        category: 'weather',
+        providerAddress: VALID_PROVIDER,
+      },
+    ],
+    [
+      'priceUsdc (special chars)',
+      {
+        name: 'Weather Oracle',
+        description: 'Real-time weather data for autonomous agents.',
+        endpoint: 'https://weather.example.com',
+        priceUsdc: '$0.001',
+        category: 'weather',
+        providerAddress: VALID_PROVIDER,
+      },
+    ],
+    [
       'category',
       {
         name: 'Weather Oracle',

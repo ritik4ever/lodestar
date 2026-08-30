@@ -59,6 +59,27 @@ export const SERVICE_MAX_TTL = 3_110_400;
 // based solely on registered_at; actual expiry may be later.
 export const SERVICE_TTL_WARNING_LEDGERS = 311_040;
 
+// Matches a non-negative decimal numeric string (e.g. "0.001", "100", "0").
+// Must be a plain number — no leading/trailing whitespace, signs, or trailing units.
+const PRICE_USDC_REGEX = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+/**
+ * Validate that `priceUsdc` is a well-formed numeric string before any
+ * on-chain write.  Throws a recoverable ContractError so the caller's
+ * route / script handler can translate it into the appropriate response.
+ *
+ * @param {*} priceUsdc - raw value from the request body or script config
+ * @throws {ContractError} INVALID_BODY when the value is not a valid numeric string
+ */
+export function validatePriceUsdc(priceUsdc) {
+  if (typeof priceUsdc !== 'string' || !PRICE_USDC_REGEX.test(priceUsdc)) {
+    throw new ContractError(
+      '`priceUsdc` must be a valid numeric string (e.g. "0.001")',
+      'INVALID_BODY',
+    );
+  }
+}
+
 const rpcMetrics = {
   getAccount: 0,
   simulateTransaction: 0,
@@ -515,6 +536,8 @@ export async function registerServiceOnChain(
       );
     }
 
+    validatePriceUsdc(priceUsdc);
+
     const keypair = getServerKeypair();
     const providerAddress = Address.fromString(keypair.publicKey());
     const provider = providerAddress.toString();
@@ -624,6 +647,8 @@ export async function buildUnsignedRegistryTx(action, providerAddress, params = 
   const provider = Address.fromString(providerAddress);
 
   if (action === 'register') {
+    validatePriceUsdc(params.priceUsdc);
+
     if (await contractHelpers.activeServiceExists(providerAddress, params.endpoint)) {
       logger.warn({ provider: providerAddress, endpoint: params.endpoint }, 'Duplicate active service registration blocked');
       throw new ContractError(
