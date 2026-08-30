@@ -14,6 +14,24 @@ const VOTE_COOLDOWN_LEDGERS: u64 = 720;
 const MAX_REPUTATION: i32 = 10_000;
 const MIN_REPUTATION: i32 = -10_000;
 
+/// Apply a single reputation vote, clamping at the invariant bounds.
+///
+/// Extracted from `update_reputation` so the clamping rules can be fuzz-tested
+/// (see `mod proptests`); keep the two in sync.
+fn reputation_after_vote(reputation: i32, positive: bool) -> i32 {
+    // Saturating arithmetic so the +1/-1 delta over the extreme values (e.g.
+    // `i32::MAX + 1` or `i32::MIN - 1`) never overflows before the clamp lands.
+    if positive {
+        reputation
+            .saturating_add(1)
+            .clamp(MIN_REPUTATION, MAX_REPUTATION)
+    } else {
+        reputation
+            .saturating_sub(1)
+            .clamp(MIN_REPUTATION, MAX_REPUTATION)
+    }
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct ServiceEntry {
@@ -355,11 +373,7 @@ impl LodestarRegistry {
             .get(&DataKey::Service(id))
             .expect("Service not found");
 
-        if positive {
-            entry.reputation = (entry.reputation + 1).min(MAX_REPUTATION);
-        } else {
-            entry.reputation = (entry.reputation - 1).max(MIN_REPUTATION);
-        }
+        entry.reputation = reputation_after_vote(entry.reputation, positive);
 
         env.storage()
             .persistent()
@@ -1299,5 +1313,66 @@ mod test {
         let (min, max) = registry.get_reputation_bounds();
         assert_eq!(min, MIN_REPUTATION);
         assert_eq!(max, MAX_REPUTATION);
+    }
+}
+
+/// Property-based fuzzing of the reputation arithmetic (#833).
+///
+/// `reputation_after_vote` increments by 1 (positive vote) or decrements by 1
+/// (negative vote) and clamps. These proptests assert the invariants across the
+/// full `i32` domain rather than a few hand-picked values:
+///   * reputation stays within `[MIN_REPUTATION, MAX_REPUTATION]`
+///   * repeated positive votes can never exceed `MAX_REPUTATION`
+///   * repeated negative votes can never underflow `MIN_REPUTATION`
+#[cfg(test)]
+mod proptests {
+    use super::{reputation_after_vote, MAX_REPUTATION, MIN_REPUTATION};
+    use proptest::prelude::*;
+
+    /// A single vote, starting from any `i32` value, stays within bounds.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn reputation_stays_within_bounds(reputation in any::<i32>()) {
+            for updated in [
+                reputation_after_vote(reputation, true),
+                reputation_after_vote(reputation, false),
+            ] {
+                prop_assert!(updated >= MIN_REPUTATION, "underflowed: {reputation} -> {updated}");
+                prop_assert!(updated <= MAX_REPUTATION, "overflowed: {reputation} -> {updated}");
+            }
+        }
+
+        /// `reputation + 1` / `reputation - 1` must not overflow `i32` for any
+        /// input (panic-would be caught here under `overflow-checks`).
+        #[test]
+        fn vote_deltas_do_not_overflow(reputation in any::<i32>()) {
+            let _ = reputation_after_vote(reputation, true);
+            let _ = reputation_after_vote(reputation, false);
+        }
+    }
+
+    /// Long runs of identical votes converge to, and never pass, the bounds.
+    proptest! {
+        #[test]
+        fn repeated_positive_votes_cannot_exceed_max(start in MIN_REPUTATION..=MAX_REPUTATION, steps in 0..100_000usize) {
+            let mut reputation = start;
+            for _ in 0..steps {
+                reputation = reputation_after_vote(reputation, true);
+                prop_assert!(reputation <= MAX_REPUTATION, "exceeded max: {reputation}");
+            }
+            prop_assert!(reputation <= MAX_REPUTATION);
+        }
+
+        #[test]
+        fn repeated_negative_votes_cannot_underflow(start in MIN_REPUTATION..=MAX_REPUTATION, steps in 0..100_000usize) {
+            let mut reputation = start;
+            for _ in 0..steps {
+                reputation = reputation_after_vote(reputation, false);
+                prop_assert!(reputation >= MIN_REPUTATION, "underflowed: {reputation}");
+            }
+            prop_assert!(reputation >= MIN_REPUTATION);
+        }
     }
 }

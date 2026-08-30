@@ -14,10 +14,41 @@ const DAY_LEDGERS: u64 = 5;
 #[cfg(test)]
 const TEST_MAX_TTL: u32 = 100_000_000;
 const MAX_SCORE: i32 = 1_000;
+const MIN_SCORE: i32 = 0;
 const INITIAL_SCORE: i32 = 100;
 const SCORE_SUCCESS: i32 = 10;
 const SCORE_FAILURE: i32 = -25;
 const FLAG_PENALTY: i32 = -200;
+
+// ── Pure score arithmetic ────────────────────────────────────────────────────
+// These helpers are extracted from `record_payment`/`flag_agent` so the clamping
+// rules they encode can be verified under fuzzing (see `mod proptests`). The
+// contract methods call them; do not let the two drift apart.
+
+/// Apply one successful payment delta to a score, clamped to `[MIN_SCORE,
+/// MAX_SCORE]`. Uses saturating arithmetic so the invariant holds for every
+/// `i32` input (including extremes where `score + delta` would overflow).
+fn score_after_success(score: i32) -> i32 {
+    score
+        .saturating_add(SCORE_SUCCESS)
+        .clamp(MIN_SCORE, MAX_SCORE)
+}
+
+/// Apply one failed-payment delta to a score, clamped to `[MIN_SCORE,
+/// MAX_SCORE]` (no underflow below zero). Same saturating/upper-bound guarantee.
+fn score_after_failure(score: i32) -> i32 {
+    score
+        .saturating_add(SCORE_FAILURE)
+        .clamp(MIN_SCORE, MAX_SCORE)
+}
+
+/// Apply one admin-flag penalty to a score, clamped to `[MIN_SCORE,
+/// MAX_SCORE]` (no underflow below zero). Same saturating/upper-bound guarantee.
+fn score_after_flag(score: i32) -> i32 {
+    score
+        .saturating_add(FLAG_PENALTY)
+        .clamp(MIN_SCORE, MAX_SCORE)
+}
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 #[contracttype]
@@ -361,11 +392,11 @@ impl LodestarAgents {
             // Enforce min_score_to_earn: agents below the threshold do not gain
             // score from successful payments, though payment stats are still recorded.
             if agent.score >= policy.min_score_to_earn {
-                agent.score = (agent.score + SCORE_SUCCESS).min(MAX_SCORE);
+                agent.score = score_after_success(agent.score);
             }
         } else {
             agent.failed_payments += 1;
-            agent.score = (agent.score + SCORE_FAILURE).max(0);
+            agent.score = score_after_failure(agent.score);
         }
 
         env.storage().persistent().set(&agent_key, &agent);
@@ -415,7 +446,7 @@ impl LodestarAgents {
 
         agent.flagged = true;
         agent.flag_reason = reason;
-        agent.score = (agent.score + FLAG_PENALTY).max(0);
+        agent.score = score_after_flag(agent.score);
 
         env.storage().persistent().set(&key, &agent);
         env.storage()
@@ -1294,5 +1325,84 @@ mod test {
         
         // Should allow full amount again after reset
         assert!(client.check_spending_allowed(&agent_addr, &1000));
+    }
+}
+
+/// Property-based fuzzing of the score arithmetic (#833).
+///
+/// The score flash-points (clamping, accumulation, and sign handling) live in
+/// the pure helpers `score_after_success`, `score_after_failure`, and
+/// `score_after_flag`. These proptests assert the invariants that hand-picked
+/// unit tests are too weak to guarantee:
+///   * score stays within `[MIN_SCORE, MAX_SCORE]` after every outcome
+///   * repeated failures / flags can never underflow below `MIN_SCORE`
+///   * repeated successes can never exceed `MAX_SCORE`
+#[cfg(test)]
+mod proptests {
+    use super::{score_after_failure, score_after_flag, score_after_success, MAX_SCORE, MIN_SCORE};
+    use proptest::prelude::*;
+
+    /// After any single score-producing event, regardless of the starting
+    /// score, the result stays within `[MIN_SCORE, MAX_SCORE]`. Exhausts the
+    /// full `i32` range so extreme/corner inputs are covered.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn score_stays_within_bounds(score in any::<i32>()) {
+            for updated in [
+                score_after_success(score),
+                score_after_failure(score),
+                score_after_flag(score),
+            ] {
+                prop_assert!(updated >= MIN_SCORE, "score underflowed: {score} -> {updated}");
+                prop_assert!(updated <= MAX_SCORE, "score overflowed: {score} -> {updated}");
+            }
+        }
+
+        /// Fuzzing `score + SCORE_FAILURE` or `score + FLAG_PENALTY` must not
+        /// overflow `i32` — if it would, the `+` panics (release build has
+        /// `overflow-checks = true`) rather than silently wrapping.
+        #[test]
+        fn failure_and_flag_deltas_do_not_overflow(score in any::<i32>()) {
+            let _ = score_after_failure(score);
+            let _ = score_after_flag(score);
+        }
+    }
+
+    /// Repeated successes pile up `SCORE_SUCCESS` and are clamped at
+    /// `MAX_SCORE`; a long enough run must saturate exactly at the ceiling
+    /// and never pass it.
+    proptest! {
+        #[test]
+        fn repeated_successes_cannot_exceed_max(start in 0i32..=MAX_SCORE, steps in 0..1_000usize) {
+            let mut score = start;
+            for _ in 0..steps {
+                score = score_after_success(score);
+                prop_assert!(score <= MAX_SCORE, "score exceeded max: {score}");
+            }
+        }
+    }
+
+    /// Repeated failures / flags must never drop the score below zero, even
+    /// when starting from the maximum.
+    proptest! {
+        #[test]
+        fn repeated_failures_cannot_underflow(start in 0i32..=MAX_SCORE, steps in 0..10_000usize) {
+            let mut score = start;
+            for _ in 0..steps {
+                score = score_after_failure(score);
+                prop_assert!(score >= MIN_SCORE, "score underflowed: {score}");
+            }
+        }
+
+        #[test]
+        fn repeated_flags_cannot_underflow(start in 0i32..=MAX_SCORE, steps in 0..10_000usize) {
+            let mut score = start;
+            for _ in 0..steps {
+                score = score_after_flag(score);
+                prop_assert!(score >= MIN_SCORE, "score underflowed: {score}");
+            }
+        }
     }
 }

@@ -17,6 +17,14 @@ soroban-sdk = { version = "22.0.0", features = ["testutils", "alloc"] }
 # The real agents contract, so integration tests exercise the actual
 # cross-contract call rather than a mock (#835).
 lodestar-agents = { path = "agents", features = ["testutils"] }
+# Property-based fuzzing of the reputation arithmetic (#833).
+proptest = "1"
+
+[profile.test]
+# Debug builds already enable overflow checks; keep them on for proptests so
+# any hidden overflow in the score arithmetic panics rather than wrapping.
+overflow-checks = true
+opt-level = 1
 
 [profile.release]
 opt-level = "z"
