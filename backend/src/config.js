@@ -130,6 +130,11 @@ const config = Object.freeze({
     },
   },
 
+  // Activity polling parameters for demo runs (waitForActivityTxHash).
+  // Configurable via environment variables with safe defaults:
+  // - DEMO_RUN_POLL_MAX_WAIT_MS (default: 8000ms) - Max total wait budget
+  // - DEMO_RUN_POLL_INITIAL_DELAY_MS (default: 250ms) - Initial poll backoff delay
+  // - DEMO_RUN_POLL_MAX_DELAY_MS (default: 2000ms) - Maximum delay between polls
   demoRun: {
     pollMaxWaitMs: parsePositiveInt(process.env.DEMO_RUN_POLL_MAX_WAIT_MS, 8_000, 'DEMO_RUN_POLL_MAX_WAIT_MS'),
     pollInitialDelayMs: parsePositiveInt(process.env.DEMO_RUN_POLL_INITIAL_DELAY_MS, 250, 'DEMO_RUN_POLL_INITIAL_DELAY_MS'),
