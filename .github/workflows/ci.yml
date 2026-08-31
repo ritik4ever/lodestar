@@ -44,6 +44,10 @@ jobs:
         working-directory: contract
         run: cargo fmt --all --check
 
+      - name: Check Rust formatting (agents)
+        working-directory: contract/agents
+        run: cargo fmt --all --check
+
       - name: Install system dependencies for stellar-cli
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libssl-dev libudev-dev
 

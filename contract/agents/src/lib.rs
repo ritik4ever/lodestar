@@ -1,8 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, vec,
-    Address, Env, IntoVal, String, Symbol, Vec,
+    contract, contractimpl, contracttype, vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -100,10 +99,7 @@ pub struct LodestarAgents;
 impl LodestarAgents {
     /// Get the current daily spent amount and reset it if a new day has started.
     /// Returns (daily_spent_stroops, last_reset_ledger) for the current day.
-    fn get_daily_spend_with_reset(
-        env: &Env,
-        policy: &SpendingPolicy,
-    ) -> (i128, u64) {
+    fn get_daily_spend_with_reset(env: &Env, policy: &SpendingPolicy) -> (i128, u64) {
         let now = env.ledger().sequence() as u64;
         if now >= policy.last_reset_ledger + DAY_LEDGERS {
             (0i128, now)
@@ -159,7 +155,6 @@ impl LodestarAgents {
         description: String,
         owner: Address,
     ) -> u64 {
-
         let key = DataKey::Agent(agent_address.clone());
         if env.storage().persistent().has(&key) {
             panic!("agent already registered");
@@ -185,7 +180,9 @@ impl LodestarAgents {
         };
 
         env.storage().persistent().set(&key, &entry);
-        env.storage().persistent().extend_ttl(&key, MAX_TTL, MAX_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MAX_TTL, MAX_TTL);
 
         // Update agent IDs list
         let ids_key = DataKey::AgentIds;
@@ -202,11 +199,7 @@ impl LodestarAgents {
 
         // Update count
         let count_key = DataKey::AgentCount;
-        let count: u64 = env
-            .storage()
-            .persistent()
-            .get(&count_key)
-            .unwrap_or(0u64);
+        let count: u64 = env.storage().persistent().get(&count_key).unwrap_or(0u64);
         let new_count = count + 1;
         env.storage().persistent().set(&count_key, &new_count);
         env.storage()
@@ -216,8 +209,8 @@ impl LodestarAgents {
         // Default spending policy
         let policy = SpendingPolicy {
             agent_address: agent_address.clone(),
-            max_per_tx_stroops: 10_000_000_000i128,   // 1,000,000 USDC stroops
-            max_per_day_stroops: 100_000_000_000i128,  // 10,000,000 USDC stroops
+            max_per_tx_stroops: 10_000_000_000i128, // 1,000,000 USDC stroops
+            max_per_day_stroops: 100_000_000_000i128, // 10,000,000 USDC stroops
             allowed_categories: vec![&env],
             min_score_to_earn: 0,
             daily_spent_stroops: 0,
@@ -242,7 +235,11 @@ impl LodestarAgents {
     // Get spending policy with automatic daily reset
     pub fn get_policy(env: Env, agent_address: Address) -> Option<SpendingPolicy> {
         let key = DataKey::Policy(agent_address.clone());
-        if let Some(mut policy) = env.storage().persistent().get::<DataKey, SpendingPolicy>(&key) {
+        if let Some(mut policy) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, SpendingPolicy>(&key)
+        {
             let (daily_spent, last_reset) = Self::get_daily_spend_with_reset(&env, &policy);
             policy.daily_spent_stroops = daily_spent;
             policy.last_reset_ledger = last_reset;
@@ -279,13 +276,13 @@ impl LodestarAgents {
 
     // Check if a transaction is allowed under the spending policy
     // Returns true if allowed, false otherwise
-    pub fn check_spending_allowed(
-        env: Env,
-        agent_address: Address,
-        amount_stroops: i128,
-    ) -> bool {
+    pub fn check_spending_allowed(env: Env, agent_address: Address, amount_stroops: i128) -> bool {
         let key = DataKey::Policy(agent_address.clone());
-        let policy = match env.storage().persistent().get::<DataKey, SpendingPolicy>(&key) {
+        let policy = match env
+            .storage()
+            .persistent()
+            .get::<DataKey, SpendingPolicy>(&key)
+        {
             Some(p) => p,
             None => return false,
         };
@@ -495,9 +492,7 @@ impl LodestarAgents {
             panic!("unauthorized");
         }
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Admin, &new_admin);
+        env.storage().persistent().set(&DataKey::Admin, &new_admin);
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Admin, MAX_TTL, MAX_TTL);
@@ -664,15 +659,15 @@ mod test {
     fn setup_with_registry(env: &Env) -> (Address, Address) {
         // Deploy mock registry
         let registry_id = env.register_contract(None, MockRegistry);
-        
+
         // Deploy agents contract with admin
         let admin = Address::generate(env);
         let contract_id = env.register(LodestarAgents, (admin.clone(),));
         let client = LodestarAgentsClient::new(env, &contract_id);
-        
+
         // Initialize with registry
         client.init(&registry_id);
-        
+
         (contract_id, admin)
     }
 
@@ -709,11 +704,7 @@ mod test {
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
         assert!(client
-            .try_flag_agent(
-                &agent_addr,
-                &String::from_str(&env, "bad behavior"),
-                &owner,
-            )
+            .try_flag_agent(&agent_addr, &String::from_str(&env, "bad behavior"), &owner,)
             .is_err());
     }
 
@@ -840,11 +831,7 @@ mod test {
 
         let caller = Address::generate(&env);
         assert!(client
-            .try_flag_agent(
-                &agent_addr,
-                &String::from_str(&env, "reason"),
-                &caller,
-            )
+            .try_flag_agent(&agent_addr, &String::from_str(&env, "reason"), &caller,)
             .is_err());
     }
 
@@ -864,11 +851,7 @@ mod test {
         // Clear auths so require_auth in flag_agent fails
         env.set_auths(&[]);
         assert!(client
-            .try_flag_agent(
-                &agent_addr,
-                &String::from_str(&env, "reason"),
-                &admin,
-            )
+            .try_flag_agent(&agent_addr, &String::from_str(&env, "reason"), &admin,)
             .is_err());
     }
 
@@ -1263,8 +1246,8 @@ mod test {
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
         let max_per_day = 1000i128;
-        let max_per_tx = 1000i128; 
-        
+        let max_per_tx = 1000i128;
+
         env.ledger().with_mut(|li| {
             li.sequence_number = 1;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1291,7 +1274,7 @@ mod test {
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        
+
         // Should allow full amount again after reset
         assert!(client.check_spending_allowed(&agent_addr, &1000));
     }
