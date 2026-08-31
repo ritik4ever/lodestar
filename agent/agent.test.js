@@ -42,7 +42,7 @@ const mockHttpClient = {
   fetch: (...args) => global.fetch(...args),
 };
 
-const { runTask, main, EVENT } = await import('./agent.js');
+const { runTask, main, EVENT, usdcStrToStroops } = await import('./agent.js');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -92,6 +92,32 @@ function buildFetch({ services = [MOCK_SERVICE], canSpend = true, endpointOk = t
 beforeEach(() => {
   vi.clearAllMocks();
   global.fetch = buildFetch();
+});
+
+describe('usdcStrToStroops', () => {
+  it('converts valid USDC strings to stroops with exact precision', () => {
+    expect(usdcStrToStroops('0')).toBe(0n);
+    expect(usdcStrToStroops('0.0000001')).toBe(1n);
+    expect(usdcStrToStroops('0.001')).toBe(10000n);
+    expect(usdcStrToStroops('1.5')).toBe(15000000n);
+    expect(usdcStrToStroops('1e2')).toBe(1000000000n);
+    expect(usdcStrToStroops('-0.001')).toBe(-10000n);
+  });
+
+  it('truncates fractional stroops beyond the on-chain minimum unit', () => {
+    expect(usdcStrToStroops('0.00000019')).toBe(1n);
+    expect(usdcStrToStroops('0.00000001')).toBe(0n);
+  });
+
+  it('rejects invalid numeric strings and non-string inputs', () => {
+    expect(() => usdcStrToStroops('')).toThrow('Invalid USDC amount');
+    expect(() => usdcStrToStroops('.')).toThrow('Invalid USDC amount');
+    expect(() => usdcStrToStroops('abc')).toThrow('Invalid USDC amount');
+    expect(() => usdcStrToStroops('NaN')).toThrow('Invalid USDC amount');
+    expect(() => usdcStrToStroops('Infinity')).toThrow('Invalid USDC amount');
+    expect(() => usdcStrToStroops('0x1')).toThrow('Invalid USDC amount');
+    expect(() => usdcStrToStroops(0.001)).toThrow(TypeError);
+  });
 });
 
 describe('runTask — happy path', () => {

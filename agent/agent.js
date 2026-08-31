@@ -9,7 +9,7 @@ import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { createEd25519Signer } from '@x402/stellar';
 import { ExactStellarScheme } from '@x402/stellar/exact/client';
 import { buildRunSummary, writeRunSummary } from './runSummary.js';
-import { stroopsToUsdcDisplay } from '../packages/stroops/index.js';
+import { stroopsToUsdcDisplay, usdcToStroops } from '../packages/stroops/index.js';
 
 
 
@@ -238,6 +238,14 @@ export function dispose() {
 // USDC <-> stroop conversion comes from the shared package so the agent and
 // the backend cannot disagree on rounding (#853). The previous local copies
 // used floating-point math and were removed.
+export function usdcStrToStroops(amountUsdc) {
+  if (typeof amountUsdc !== 'string') {
+    throw new TypeError('USDC amount must be a string');
+  }
+
+  const value = amountUsdc.trim();
+  return usdcToStroops(value);
+}
 
 function buildHttpClient() {
   // Re-read the secret for the x402 signer since the module-level reference
