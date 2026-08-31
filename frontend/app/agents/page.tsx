@@ -8,6 +8,8 @@ import { fetchAgents, fetchAgentStats } from '@/lib/contract';
 import { sortAgents } from '@/lib/sort';
 import AgentCard from '@/components/AgentCard';
 import AgentCardSkeleton from '@/components/AgentCardSkeleton';
+import EmptyState from '@/components/EmptyState';
+import { EmptyAgentsIcon } from '@/lib/emptyStateIcons';
 import ScoreBadge from '@/components/ScoreBadge';
 
 const SORTS: { label: string; value: AgentSortOption }[] = [
@@ -176,12 +178,12 @@ export default function AgentsPage() {
       )}
 
       {!loading && !error && total === 0 && (
-        <div className="card p-12 text-center">
-          <p className="text-secondary text-sm mb-4">No agents registered yet.</p>
-          <Link href="/agents/register" className="btn-primary px-5 py-2.5 text-sm">
-            Be the first
-          </Link>
-        </div>
+        <EmptyState
+          icon={<EmptyAgentsIcon />}
+          title="No agents registered"
+          message="The agent registry is empty. On-chain trust scores start here — register the first agent to begin building reputation."
+          action={{ href: '/agents/register', label: 'Register Agent' }}
+        />
       )}
 
       {!loading && !error && total > 0 && (
