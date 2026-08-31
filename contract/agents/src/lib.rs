@@ -232,7 +232,17 @@ impl LodestarAgents {
         new_count
     }
 
-    // Get agent entry
+    /// Returns the registered agent entry for `agent_address`, if one exists.
+    ///
+    /// This is a read-only query and does not require authorization. It reads
+    /// the persistent `DataKey::Agent(agent_address)` entry without changing
+    /// its value or TTL. An address that has not been registered returns
+    /// `None`.
+    ///
+    /// # Panics
+    ///
+    /// This function has no explicit panic conditions or contract error
+    /// variants.
     pub fn get_agent(env: Env, agent_address: Address) -> Option<AgentEntry> {
         env.storage()
             .persistent()
