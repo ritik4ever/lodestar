@@ -46,6 +46,13 @@ vi.mock('../config.js', () => ({
     contract: { agentsId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4' },
     server: { address: 'GADMINXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', secret: 'test_admin_secret_key' },
     rateLimit: { payment: { max: 10, windowMs: 60000 } },
+    ownerAuth: {
+      missing: { status: 401, code: 'AUTH_MISSING' },
+      invalidParams: { status: 400, code: 'INVALID_PARAMS' },
+      notFound: { status: 404, code: 'NOT_FOUND' },
+      forbidden: { status: 403, code: 'FORBIDDEN' },
+      internalError: { status: 500, code: 'AUTH_ERROR' },
+    },
   },
 }));
 

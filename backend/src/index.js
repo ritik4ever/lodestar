@@ -41,6 +41,7 @@ if (process.argv.includes("--print-config")) {
         trustProxy: config.trustProxy,
         rateLimit: config.rateLimit,
         demoRun: config.demoRun,
+        ownerAuth: config.ownerAuth,
       },
       null,
       2,
@@ -52,6 +53,8 @@ if (process.argv.includes("--print-config")) {
 validateConfig(logger);
 
 logger.info({ corsOrigin: config.corsOrigin }, "Resolved CORS origin allowlist");
+
+logger.info({ ownerAuth: config.ownerAuth }, "Resolved ownerAuth response values (status codes, error codes)");
 
 const app = express();
 

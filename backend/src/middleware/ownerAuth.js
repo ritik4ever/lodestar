@@ -1,4 +1,5 @@
 import { getAgent } from '../lib/contract.js';
+import config from '../config.js';
 import logger from '../lib/logger.js';
 
 /**
@@ -10,24 +11,24 @@ export async function ownerAuth(req, res, next) {
   try {
     const callerAddress = req.headers['x-caller-address'];
     if (!callerAddress || typeof callerAddress !== 'string') {
-      return res.status(401).json({ error: 'Caller address missing', code: 'AUTH_MISSING' });
+      return res.status(config.ownerAuth.missing.status).json({ error: 'Caller address missing', code: config.ownerAuth.missing.code });
     }
     const { address } = req.params;
     if (!address) {
-      return res.status(400).json({ error: 'Agent address param missing', code: 'INVALID_PARAMS' });
+      return res.status(config.ownerAuth.invalidParams.status).json({ error: 'Agent address param missing', code: config.ownerAuth.invalidParams.code });
     }
     const agent = await getAgent(address);
     if (!agent) {
-      return res.status(404).json({ error: 'Agent not found', code: 'NOT_FOUND' });
+      return res.status(config.ownerAuth.notFound.status).json({ error: 'Agent not found', code: config.ownerAuth.notFound.code });
     }
     if (agent.owner !== callerAddress) {
-      return res.status(403).json({ error: 'Caller is not the owner of this agent', code: 'FORBIDDEN' });
+      return res.status(config.ownerAuth.forbidden.status).json({ error: 'Caller is not the owner of this agent', code: config.ownerAuth.forbidden.code });
     }
     // Attach to request for downstream handlers
     req.callerAddress = callerAddress;
     next();
   } catch (err) {
     logger.error({ err }, 'ownerAuth middleware failed');
-    res.status(500).json({ error: 'Internal auth error', code: 'AUTH_ERROR' });
+    res.status(config.ownerAuth.internalError.status).json({ error: 'Internal auth error', code: config.ownerAuth.internalError.code });
   }
 }
