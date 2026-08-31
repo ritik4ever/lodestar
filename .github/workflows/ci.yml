@@ -23,6 +23,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -69,6 +74,62 @@ jobs:
       - name: Test agents contract
         working-directory: contract/agents
         run: cargo test
+
+      - name: Test WASM size checker
+        run: node --test scripts/check-wasm-size.test.mjs
+
+      - name: Build base contracts for size comparison
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git worktree add --detach /tmp/lodestar-base "$BASE_SHA"
+
+          (
+            cd /tmp/lodestar-base/contract
+            stellar contract build
+          )
+          (
+            cd /tmp/lodestar-base/contract/agents
+            stellar contract build
+          )
+
+          mkdir -p /tmp/lodestar-base-wasm
+          cp /tmp/lodestar-base/contract/target/wasm32v1-none/release/lodestar_registry.wasm \
+            /tmp/lodestar-base-wasm/lodestar_registry.wasm
+          cp /tmp/lodestar-base/contract/agents/target/wasm32v1-none/release/lodestar_agents.wasm \
+            /tmp/lodestar-base-wasm/lodestar_agents.wasm
+
+      - name: Check and report contract WASM sizes
+        env:
+          MAX_WASM_SIZE_BYTES: 131072
+        run: |
+          set -euo pipefail
+          arguments=(
+            --current-registry contract/target/wasm32v1-none/release/lodestar_registry.wasm
+            --current-agents contract/agents/target/wasm32v1-none/release/lodestar_agents.wasm
+            --metrics wasm-size-metrics.json
+          )
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            arguments+=(
+              --base-registry /tmp/lodestar-base-wasm/lodestar_registry.wasm
+              --base-agents /tmp/lodestar-base-wasm/lodestar_agents.wasm
+            )
+          fi
+
+          node scripts/check-wasm-size.mjs "${arguments[@]}"
+
+      - name: Upload WASM size history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-size-${{ github.run_id }}-${{ github.run_attempt }}
+          path: wasm-size-metrics.json
+          if-no-files-found: warn
+          retention-days: 90
 
   # ── Backend: test ─────────────────────────────────────────────────────
   backend-test:

@@ -58,6 +58,21 @@ cd contract/agents && stellar contract build
 
 All of the above run automatically on every PR and push to `main` via GitHub Actions (`.github/workflows/ci.yml`). Branch protection requiring all jobs to pass before merge is a planned follow-up.
 
+The contract job also checks the exact registry and agents WASM artifacts against a
+128 KiB (`131072` byte) ceiling. Pull requests include the current size and the
+delta from the base commit in the job summary. Each run uploads the same values as
+a JSON artifact for 90 days, making size changes visible over time.
+
+To run the check locally after building both contracts:
+
+```bash
+node scripts/check-wasm-size.mjs \
+  --current-registry contract/target/wasm32v1-none/release/lodestar_registry.wasm \
+  --current-agents contract/agents/target/wasm32v1-none/release/lodestar_agents.wasm
+```
+
+Set `MAX_WASM_SIZE_BYTES` to test a different ceiling.
+
 ## Code style
 
 - We use Husky and `lint-staged` to automatically run Prettier, ESLint, and `cargo fmt` on staged files before every commit.
