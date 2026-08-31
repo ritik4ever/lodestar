@@ -48,19 +48,6 @@ function normalizePriceUsdc(value) {
   return normalized;
 }
 
-/**
- * Annotate a service entry with a ttl_warning flag.
- * Returns true when the estimated remaining TTL falls below
- * SERVICE_TTL_WARNING_LEDGERS. Omits the field when currentLedger
- * is unavailable so callers treat absence as "no warning data".
- */
-function annotateTtlWarning(service, currentLedger) {
-  if (currentLedger == null) return service;
-  const expiry = service.registered_at + SERVICE_MAX_TTL;
-  const warnOnset = expiry - SERVICE_TTL_WARNING_LEDGERS;
-  return { ...service, ttl_warning: currentLedger >= warnOnset };
-}
-
 function parsePositiveSafeInteger(value) {
   if (typeof value === "number") {
     return Number.isSafeInteger(value) && value > 0 ? value : null;
@@ -372,6 +359,9 @@ router.post("/registry/prepare-register", writeRateLimiter(), async (req, res) =
     if (typeof endpoint !== "string" || !endpoint.startsWith("https://")) {
       return res.status(400).json({ error: "`endpoint` must start with https://", code: "INVALID_BODY" });
     }
+    if (endpoint.trim().length > 256) {
+      return res.status(400).json({ error: "`endpoint` must be at most 256 characters", code: "INVALID_BODY" });
+    }
     if (!SERVICE_CATEGORIES.has(category)) {
       return res.status(400).json({ error: "`category` is invalid", code: "INVALID_BODY" });
     }
@@ -508,25 +498,42 @@ router.post("/reputation/:id", writeRateLimiter(), async (req, res) => {
   }
 });
 
+/**
+ * Liveness (#841).
+ *
+ * Deliberately dependency-free: it answers "is this process running?" and
+ * nothing else. Touching RPC here would make an orchestrator restart a healthy
+ * instance whose only problem is a slow upstream — use /api/ready for that.
+ */
 router.get("/health", async (req, res) => {
   const { default: config } = await import("../config.js");
-  const { checkRpcHealth } = await import("../lib/stellar.js");
+  res.json({
+    status: "ok",
+    network: config.stellar.network,
+    contractId: config.contract.id,
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * Readiness (#841).
+ *
+ * Checks the dependencies needed to actually serve traffic, each under a short
+ * timeout. Returns 503 when a required dependency is unreachable so the
+ * orchestrator stops routing here without restarting the process.
+ */
+router.get("/ready", async (req, res) => {
+  const { checkReadiness } = await import("../lib/readiness.js");
   try {
-    const health = await checkRpcHealth();
-    res.json({
-      status: health.status,
-      network: config.stellar.network,
-      contractId: config.contract.id,
-      rpc: health.rpc,
-      contract: health.contract,
-      timestamp: new Date().toISOString(),
-      ...(health.error && { error: health.error }),
-    });
+    const result = await checkReadiness();
+    res.status(result.ready ? 200 : 503).json(result);
   } catch (err) {
-    logger.error({ err }, "GET /api/health failed");
-    res.status(500).json({
-      status: "unhealthy",
-      error: "Health check failed",
+    logger.error({ err }, "GET /api/ready failed");
+    res.status(503).json({
+      ready: false,
+      status: "not_ready",
+      error: "Readiness check failed",
       timestamp: new Date().toISOString(),
     });
   }

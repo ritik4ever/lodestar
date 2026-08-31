@@ -1,0 +1,130 @@
+name: Contract Change
+description: Propose or report a change to the Soroban contract
+title: "[Contract]: "
+labels: ["contract", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for anything that changes contract code, storage layout, or a
+        deployed WASM. Deployment details are requested up front so maintainers do not
+        have to chase them.
+
+        **Not for vulnerabilities.** Report those privately — see the security link on
+        the new-issue page.
+
+  - type: dropdown
+    id: change_type
+    attributes:
+      label: Change Type
+      description: What kind of contract change is this?
+      options:
+        - New contract function
+        - Change to existing function behaviour
+        - Storage layout / data migration
+        - Upgrade of a deployed contract
+        - Build or deployment tooling
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Target Network
+      description: Which network is affected?
+      multiple: true
+      options:
+        - local / standalone
+        - testnet
+        - futurenet
+        - mainnet
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What should change, and why?
+    validations:
+      required: true
+
+  - type: input
+    id: contract_id
+    attributes:
+      label: Contract ID
+      description: The deployed contract address this affects, if it is already deployed.
+      placeholder: CB...
+    validations:
+      required: false
+
+  - type: input
+    id: wasm_hash
+    attributes:
+      label: Current WASM Hash
+      description: Hash of the WASM currently installed on the target network, if known.
+      placeholder: 64-character hex hash
+    validations:
+      required: false
+
+  - type: dropdown
+    id: deployment_impact
+    attributes:
+      label: Deployment Impact
+      description: What does shipping this require?
+      options:
+        - No redeploy needed (off-chain only)
+        - New WASM upload, no state migration
+        - New WASM upload plus state migration
+        - New contract deployment (new contract ID)
+        - Not sure — needs maintainer input
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: breaking
+    attributes:
+      label: Compatibility
+      description: Tick anything this change breaks.
+      options:
+        - label: Breaks existing contract callers (function signature or return shape)
+        - label: Breaks stored data — existing state cannot be read as-is
+        - label: Requires the backend or agent to be updated in the same release
+        - label: Requires frontend changes
+        - label: None of the above — fully backwards compatible
+
+  - type: textarea
+    id: migration
+    attributes:
+      label: Migration and Rollback Plan
+      description: |
+        If state or a deployed contract is affected: how does existing data move
+        forward, and how would you roll this back if it misbehaves on-chain?
+      placeholder: |
+        Migration: ...
+        Rollback: ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing
+      description: How should this be verified before it reaches mainnet?
+      placeholder: |
+        - Contract unit tests covering ...
+        - Deployed to testnet and exercised via ...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/Stellar-Ecosystem/lodestar/blob/main/CODE_OF_CONDUCT.md)
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
+        - label: This is not a security vulnerability — I understand those are reported privately
+          required: true

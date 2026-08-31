@@ -37,6 +37,13 @@ This document covers the component responsibilities, data flow, trust boundaries
 - **Frontend sync:** `frontend/lib/categoryMeta.tsx` is generated from or verified against the on-chain set to prevent drift between the UI and the registry.
 - **Migration path:** Existing mixed-case entries (e.g., `Weather`, `weather `) are normalized to lowercase canonical values in a one-time migration. Providers and agents should use `list_categories()` after this change to discover the valid set and avoid registering/querying with stale or non-canonical strings.
 
+## Contract Storage
+
+Both contracts key their state with `#[contracttype]` `DataKey` enums. Every key,
+its value type, TTL class and growth characteristics are documented in
+**[Storage Layout](./storage-layout.md)** — the reference for reasoning about
+migration cost, TTL rent, and what a redeploy would have to preserve.
+
 ## Trust Boundaries
 
 - **Providers vs. Registry:** Providers are untrusted. They can register any endpoint. The registry relies on the x402 payment success/failure feedback loop (reputation) from agents to bubble up good services and bury bad ones.

@@ -17,6 +17,7 @@ services:
       USDC_CONTRACT_ID: ${USDC_CONTRACT_ID:-dummy_usdc_contract}
     ports:
       - "127.0.0.1:3001:3001"
+    # Liveness (#841): is the process up? A dependency outage must not restart it.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
@@ -31,6 +32,8 @@ services:
       PORT: 3000
     depends_on:
       backend:
-        condition: service_started
+        # Readiness (#841): wait until the backend can actually serve, not merely
+        # until its process has started.
+        condition: service_healthy
     ports:
       - "127.0.0.1:3000:3000"

@@ -53,6 +53,9 @@ export function initKit() {
 
 export function disconnectWallet(): void {
   _initialized = false;
+  // Drop the persisted hint too, otherwise the next page load would restore the
+  // connection the user just ended (#838).
+  clearWalletHint();
   console.info(JSON.stringify({ event: 'wallet_disconnected' }));
 }
 
@@ -117,5 +120,110 @@ export async function getBalance(address: string): Promise<string> {
     return usdc ? parseFloat(usdc.balance).toFixed(4) : '0.0000';
   } catch {
     return '0.0000';
+  }
+}
+
+// ── connection persistence (#838) ─────────────────────────────────────────────
+//
+// A refresh previously dropped the connection entirely. We persist a *hint* —
+// which wallet was used, and the address it reported — so the session can be
+// restored on mount.
+//
+// Nothing secret is stored. A wallet id is a public identifier and a Stellar
+// address is public by definition; no key, seed, signature or session token is
+// written. The stored address is treated as a cache for optimistic UI only: the
+// restore path always re-asks the provider and trusts the provider's answer.
+
+const WALLET_HINT_KEY = 'lodestar.wallet.hint';
+
+export interface WalletConnectionHint {
+  walletId: string;
+  address: string;
+  savedAt: number;
+}
+
+function isBrowser(): boolean {
+  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+}
+
+export function persistWalletHint(walletId: string, address: string): void {
+  if (!isBrowser()) return;
+  try {
+    const hint: WalletConnectionHint = { walletId, address, savedAt: Date.now() };
+    window.localStorage.setItem(WALLET_HINT_KEY, JSON.stringify(hint));
+  } catch {
+    // Storage can be unavailable (private mode, blocked cookies). Persistence is
+    // an enhancement — never let it break connecting.
+  }
+}
+
+export function getWalletHint(): WalletConnectionHint | null {
+  if (!isBrowser()) return null;
+  try {
+    const raw = window.localStorage.getItem(WALLET_HINT_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<WalletConnectionHint>;
+    if (typeof parsed?.walletId !== 'string' || !parsed.walletId) return null;
+    if (!WALLET_OPTIONS.some((w) => w.id === parsed.walletId)) return null;
+
+    return {
+      walletId: parsed.walletId,
+      address: typeof parsed.address === 'string' ? parsed.address : '',
+      savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearWalletHint(): void {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.removeItem(WALLET_HINT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Restore a previous connection.
+ *
+ * The stored address is never trusted: the wallet provider is re-queried and its
+ * answer wins. If the provider reports a different address — the user switched
+ * accounts in the extension since the last visit — the new address is returned
+ * and the hint updated. If the provider refuses, is locked, or is no longer
+ * installed, the hint is cleared and null is returned so the UI shows a
+ * disconnected state rather than a stale one.
+ */
+export async function restoreWalletConnection(): Promise<string | null> {
+  const hint = getWalletHint();
+  if (!hint) return null;
+
+  try {
+    const address = await connectWithWallet(hint.walletId);
+    if (!address) {
+      clearWalletHint();
+      return null;
+    }
+
+    if (address !== hint.address) {
+      console.info(
+        JSON.stringify({ event: 'wallet_restored_address_changed', walletId: hint.walletId }),
+      );
+    }
+
+    persistWalletHint(hint.walletId, address);
+    return address;
+  } catch (error: any) {
+    console.info(
+      JSON.stringify({
+        event: 'wallet_restore_failed',
+        walletId: hint.walletId,
+        reason: error instanceof WalletError ? error.type : 'UNKNOWN',
+      }),
+    );
+    clearWalletHint();
+    return null;
   }
 }

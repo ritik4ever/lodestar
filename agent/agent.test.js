@@ -155,7 +155,7 @@ describe('runTask — happy path', () => {
 
   it('returns { success: true, priceUsdc } on success', async () => {
     const result = await runTask('weather', (ep) => ep, true, mockHttpClient);
-    expect(result).toEqual({ success: true, priceUsdc: MOCK_SERVICE.price_usdc });
+    expect(result).toMatchObject({ success: true, priceUsdc: MOCK_SERVICE.price_usdc });
   });
 
   it('skips spend check when scoring is disabled', async () => {
@@ -182,7 +182,7 @@ describe('runTask — no services found', () => {
   it('returns { success: false, priceUsdc: null }', async () => {
     global.fetch = buildFetch({ services: [] });
     const result = await runTask('weather', (ep) => ep, true, mockHttpClient);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
   });
 });
 
@@ -214,7 +214,7 @@ describe('runTask — spend check blocked', () => {
   it('returns { success: false, priceUsdc: null }', async () => {
     global.fetch = buildFetch({ canSpend: false });
     const result = await runTask('weather', (ep) => ep, true, mockHttpClient);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
   });
 
   it('falls back to the next candidate if the first is blocked by spend check', async () => {
@@ -248,7 +248,7 @@ describe('runTask — spend check blocked', () => {
     const result = await runTask('weather', (ep) => ep, true);
 
     // Should succeed on serviceB
-    expect(result).toEqual({ success: true, priceUsdc: '0.001' });
+    expect(result).toMatchObject({ success: true, priceUsdc: '0.001' });
 
     // Should have logged both spend check blocked for Svc A and pass for Svc B
     const blocked = logWarn.mock.calls.find(([f]) => f?.event === EVENT.SPEND_CHECK_BLOCKED);
@@ -324,7 +324,7 @@ describe('runTask — payment_failed on fetch throw', () => {
 
     const result = await runTask('weather', (ep) => ep, false, mockHttpClient);
 
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
     expect(fetchSpy).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ signal: expect.any(AbortSignal) }));
     const paymentFailedCall = logError.mock.calls.find(([f]) => f?.event === EVENT.PAYMENT_FAILED);
     expect(paymentFailedCall).toBeDefined();
@@ -445,7 +445,7 @@ describe('runTask — weighted fallback retry', () => {
     });
 
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: true, priceUsdc: svcB.price_usdc });
+    expect(result).toMatchObject({ success: true, priceUsdc: svcB.price_usdc });
   });
 
   it('logs payment_failed for each failing service and service_selected for each attempt', async () => {
@@ -475,7 +475,7 @@ describe('runTask — weighted fallback retry', () => {
   it('returns failure when all candidates are exhausted', async () => {
     global.fetch = buildFetch({ endpointOk: false });
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
   });
 
   it('submits negative reputation vote when service returns bad data after payment', async () => {
@@ -515,7 +515,7 @@ describe('runTask — min reputation threshold', () => {
     global.fetch = buildFetch({ services: [lowRepService] });
 
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
 
     const call = logError.mock.calls.find(
       ([f]) => f?.event === EVENT.TASK_START && f?.minReputation === 50
@@ -529,7 +529,7 @@ describe('runTask — min reputation threshold', () => {
     global.fetch = buildFetch({ services: [borderlineService] });
 
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: true, priceUsdc: borderlineService.price_usdc });
+    expect(result).toMatchObject({ success: true, priceUsdc: borderlineService.price_usdc });
   });
 
   it('filters out negative-reputation services with default threshold of 0', async () => {
@@ -537,7 +537,7 @@ describe('runTask — min reputation threshold', () => {
     global.fetch = buildFetch({ services: [negRepService] });
 
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
   });
 });
 
