@@ -929,9 +929,14 @@ export async function registerAgentOnChain(agentAddress, name, description) {
     const agentAddr = Address.fromString(agentAddress);
     // owner = the agent's own wallet address (self-owned), not the server key
     const ownerAddress = agentAddr;
+    // `register_agent` now requires owner auth, so server-side registration
+    // uses the admin-gated `register_agent_for` entry point. The server
+    // keypair must be the agents contract admin.
+    const callerAddr = Address.fromString(getServerKeypair().publicKey());
 
     const op = contract.call(
-      'register_agent',
+      'register_agent_for',
+      nativeToScVal(callerAddr, { type: 'address' }),
       nativeToScVal(agentAddr, { type: 'address' }),
       nativeToScVal(name, { type: 'string' }),
       nativeToScVal(description, { type: 'string' }),

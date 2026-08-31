@@ -149,10 +149,53 @@ impl LodestarAgents {
             .extend_ttl(&DataKey::Admin, MAX_TTL, MAX_TTL);
     }
 
-    // Register a new agent.
-    // owner = agent_address — self-owned by default. No require_auth here so
-    // the backend server can register on behalf of any wallet address.
+    // Register a new agent (self-service).
+    // Requires the owner to authorize AND the owner to be the agent address
+    // itself. This prevents third parties from front-running a user's
+    // registration and capturing ownership of an address they do not control.
+    // Server-side registration of arbitrary addresses uses `register_agent_for`
+    // (admin-only).
     pub fn register_agent(
+        env: Env,
+        agent_address: Address,
+        name: String,
+        description: String,
+        owner: Address,
+    ) -> u64 {
+        owner.require_auth();
+        if agent_address != owner {
+            panic!("unauthorized");
+        }
+        Self::register_agent_internal(env, agent_address, name, description, owner)
+    }
+
+    // Register a new agent on behalf of an owner (admin-only).
+    // Preserves the server-side registration flow: the contract admin may
+    // register any agent address. Every other caller is rejected.
+    pub fn register_agent_for(
+        env: Env,
+        caller: Address,
+        agent_address: Address,
+        name: String,
+        description: String,
+        owner: Address,
+    ) -> u64 {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("admin not set — call initialize() first");
+
+        if caller != admin {
+            panic!("unauthorized");
+        }
+
+        Self::register_agent_internal(env, agent_address, name, description, owner)
+    }
+
+    fn register_agent_internal(
         env: Env,
         agent_address: Address,
         name: String,
@@ -653,7 +696,11 @@ mod test {
 
     fn setup_agent(env: &Env, contract_id: &Address, agent_addr: &Address, owner: &Address) {
         let client = LodestarAgentsClient::new(env, contract_id);
-        client.register_agent(
+        // Tests register distinct agent/owner addresses, so use the
+        // admin-gated path (mock_all_auths covers the admin's authorization).
+        let admin = client.get_admin();
+        client.register_agent_for(
+            &admin,
             agent_addr,
             &String::from_str(env, "Test Agent"),
             &String::from_str(env, "A test agent description"),
@@ -694,6 +741,129 @@ mod test {
         let client = LodestarAgentsClient::new(&env, &contract_id);
 
         assert_eq!(client.get_admin(), admin);
+    }
+
+    #[test]
+    fn test_register_agent_requires_owner_auth() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        // No mock_all_auths: the owner has not authorized the registration.
+        let res = client.try_register_agent(
+            &agent_addr,
+            &String::from_str(&env, "Test Agent"),
+            &String::from_str(&env, "description"),
+            &agent_addr,
+        );
+        assert!(res.is_err(), "register_agent must require owner auth");
+    }
+
+    #[test]
+    fn test_register_agent_blocks_front_running() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let victim = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        // Attacker tries to register the victim's address and claim ownership.
+        let res = client.try_register_agent(
+            &victim,
+            &String::from_str(&env, "Squatted Agent"),
+            &String::from_str(&env, "owned by attacker"),
+            &attacker,
+        );
+        assert!(
+            res.is_err(),
+            "front-running must be blocked: agent_address != owner"
+        );
+        assert!(
+            client.get_agent(&victim).is_none(),
+            "victim address must not be registered"
+        );
+
+        // The victim can still self-register afterwards.
+        client.register_agent(
+            &victim,
+            &String::from_str(&env, "Legit Agent"),
+            &String::from_str(&env, "owned by victim"),
+            &victim,
+        );
+        let agent = client.get_agent(&victim).unwrap();
+        assert_eq!(agent.owner, victim);
+    }
+
+    #[test]
+    fn test_register_agent_self_registration_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let id = client.register_agent(
+            &agent_addr,
+            &String::from_str(&env, "Self Agent"),
+            &String::from_str(&env, "self-owned"),
+            &agent_addr,
+        );
+        assert_eq!(id, 1);
+        let agent = client.get_agent(&agent_addr).unwrap();
+        assert_eq!(agent.owner, agent_addr);
+    }
+
+    #[test]
+    fn test_register_agent_for_requires_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let non_admin = Address::generate(&env);
+
+        let res = client.try_register_agent_for(
+            &non_admin,
+            &agent_addr,
+            &String::from_str(&env, "Test Agent"),
+            &String::from_str(&env, "description"),
+            &owner,
+        );
+        assert!(
+            res.is_err(),
+            "register_agent_for must reject non-admin callers"
+        );
+        assert!(client.get_agent(&agent_addr).is_none());
+    }
+
+    #[test]
+    fn test_register_agent_for_succeeds_with_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let id = client.register_agent_for(
+            &admin,
+            &agent_addr,
+            &String::from_str(&env, "Server Agent"),
+            &String::from_str(&env, "registered by admin"),
+            &owner,
+        );
+        assert_eq!(id, 1);
+        let agent = client.get_agent(&agent_addr).unwrap();
+        assert_eq!(agent.owner, owner);
     }
 
     #[test]
