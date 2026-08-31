@@ -120,6 +120,10 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Check bundle size budget
+        working-directory: frontend
+        run: npm run bundle:check
+
       - name: Run tests
         working-directory: frontend
         run: npm test -- --passWithNoTests

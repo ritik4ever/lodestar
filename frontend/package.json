@@ -10,7 +10,9 @@
     "start": "next start",
     "lint": "next lint",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "bundle:check": "node scripts/check-bundle-size.mjs",
+    "bundle:analyze": "ANALYZE=true next build"
   },
   "dependencies": {
     "@creit-tech/stellar-wallets-kit": "npm:@jsr/creit-tech__stellar-wallets-kit@^2.1.0",
@@ -22,6 +24,7 @@
     "swr": "^2.4.1"
   },
   "devDependencies": {
+    "@next/bundle-analyzer": "14.2.5",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.4.8",
     "@testing-library/react": "^16.0.0",
