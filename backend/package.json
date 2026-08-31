@@ -27,7 +27,8 @@
     "ioredis": "^5.11.1",
     "node-fetch": "^3.3.2",
     "p-queue": "^9.3.0",
-    "pino": "^9.3.2"
+    "pino": "^9.3.2",
+    "pino-http": "^10.5.0"
   },
   "engines": {
     "node": ">=22.0.0"

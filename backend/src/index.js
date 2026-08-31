@@ -5,6 +5,7 @@ import logger from "./lib/logger.js";
 import {
   requestLogger,
   requestContextMiddleware,
+  requestContextErrorHandler,
 } from "./middleware/requestContext.js";
 import { checkReadiness } from "./lib/readiness.js";
 import {
@@ -116,7 +117,7 @@ if (enableDemoRoutes) {
   logger.info({ nodeEnv: config.nodeEnv }, 'Demo routes disabled (set ENABLE_DEMO_ROUTES=true to enable)');
 }
 
-app.use((err, req, res, _next) => {
+app.use((err, req, res, next) => {
   if (err.type === "entity.too.large") {
     req.log.warn({ expected: config.jsonBodyLimit }, "Request body too large");
     return res.status(413).json({
@@ -124,12 +125,19 @@ app.use((err, req, res, _next) => {
       code: "PAYLOAD_TOO_LARGE",
     });
   }
+  next(err);
+});
 
+app.use(requestContextErrorHandler);
 
+app.use((err, req, res, _next) => {
+  // Fallback: ensure no raw driver error leaks (should be handled by requestContextErrorHandler)
+  const requestId = req.id || req.headers['x-request-id'];
+  logger.error({ err, requestId }, 'Unhandled error reached fallback handler');
   res.status(500).json({
     error: "Internal server error",
-    code: "INTERNAL_ERROR",
-    requestId: _req.requestId,
+    code: err.code || "INTERNAL_ERROR",
+    requestId,
   });
 });
 let server;
