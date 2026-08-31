@@ -328,11 +328,15 @@ impl LodestarAgents {
             .persistent()
             .get(&DataKey::RegistryContract)
             .expect("registry contract not set — call init() first");
-        let service: ServiceEntry = env.invoke_contract(
+        let service: Option<ServiceEntry> = env.invoke_contract(
             &registry_contract,
             &Symbol::new(&env, "get_service"),
             vec![&env, service_id.into_val(&env)],
         );
+        let service = match service {
+            Some(entry) => entry,
+            None => panic!("service not found"),
+        };
         if service.provider != caller {
             panic!("unauthorized: caller is not the service provider");
         }
@@ -634,9 +638,9 @@ mod test {
 
     #[contractimpl]
     impl MockRegistry {
-        pub fn get_service(env: Env, id: u64) -> ServiceEntry {
+        pub fn get_service(env: Env, id: u64) -> Option<ServiceEntry> {
             // Return a mock service with a generated provider
-            ServiceEntry {
+            Some(ServiceEntry {
                 id,
                 name: String::from_str(&env, "Test Service"),
                 description: String::from_str(&env, "Test Description"),
@@ -647,7 +651,7 @@ mod test {
                 reputation: 100,
                 active: true,
                 registered_at: env.ledger().sequence() as u64,
-            }
+            })
         }
     }
 

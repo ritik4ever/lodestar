@@ -401,6 +401,7 @@ export async function getService(id) {
     const retval = await simulateRead(op);
     if (!retval) return null;
     const native = scValToNative(retval);
+    if (native == null) return null;
     return {
       id: Number(native.id),
       name: native.name,
@@ -594,6 +595,9 @@ export async function deactivateServiceOnChain(id, providerAddress) {
     }
 
     const native = scValToNative(retval);
+    if (native == null) {
+      throw new ContractError(`Service ${id} not found`, 'SERVICE_NOT_FOUND');
+    }
     const serviceProvider = native.provider?.toString() ?? native.provider;
 
     if (serviceProvider !== providerAddress) {
