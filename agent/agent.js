@@ -11,7 +11,7 @@ import { ExactStellarScheme } from '@x402/stellar/exact/client';
 import { buildRunSummary, writeRunSummary } from './runSummary.js';
 import { stroopsToUsdcDisplay } from '../packages/stroops/index.js';
 
-// ── Config ────────────────────────────────────────────────────────────────────
+
 
 function loadSecret() {
   const envSecret = process.env.AGENT_STELLAR_SECRET;
@@ -78,9 +78,7 @@ try {
 }
 const AGENT_ADDRESS = agentKeypair.publicKey();
 
-// Zero the in-memory secret reference after key derivation.
-// JS strings are immutable, so this does not scrub the original bytes
-// from the heap, but removes the long-lived reference from this scope.
+
 AGENT_SECRET = undefined;
 
 const logger = pino({
