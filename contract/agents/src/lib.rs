@@ -423,6 +423,48 @@ impl LodestarAgents {
             .extend_ttl(&key, MAX_TTL, MAX_TTL);
     }
 
+    // Unflag an agent (admin-only). Clears the flag and reason so the agent
+    // becomes eligible again once its score and other conditions are met.
+    //
+    // Penalty-reversal policy: the FLAG_PENALTY score deduction applied by
+    // flag_agent is NOT refunded here. The flag reflects a violation that
+    // already occurred, and unflagging restores future eligibility — it does
+    // not rewrite history. The agent's score continues to recover through
+    // normal successful-payment activity via record_payment.
+    pub fn unflag_agent(env: Env, agent_address: Address, caller: Address) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("admin not set — call initialize() first");
+
+        if caller != admin {
+            panic!("unauthorized");
+        }
+
+        let key = DataKey::Agent(agent_address.clone());
+        let mut agent: AgentEntry = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .expect("agent not found");
+
+        agent.flagged = false;
+        agent.flag_reason = String::from_str(&env, "");
+
+        env.storage().persistent().set(&key, &agent);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (Symbol::new(&env, "agent_unflagged"), agent_address),
+            agent.score,
+        );
+    }
+
     // Deactivate agent (owner only)
     pub fn deactivate_agent(env: Env, agent_address: Address, caller: Address) {
         caller.require_auth();
