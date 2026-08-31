@@ -374,6 +374,61 @@ impl LodestarRegistry {
             .extend_ttl(&vote_key, MAX_TTL, MAX_TTL);
     }
 
+    pub fn update_service(
+        env: Env,
+        provider: Address,
+        id: u64,
+        price_usdc: String,
+        description: String,
+        pay_to: String,
+    ) {
+        provider.require_auth();
+
+        assert!(
+            description.len() >= 10,
+            "description must be 10-256 characters"
+        );
+        assert!(
+            description.len() <= 256,
+            "description must be 10-256 characters"
+        );
+
+        let mut entry: ServiceEntry = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Service(id))
+            .expect("Service not found");
+
+        assert!(
+            provider == entry.provider,
+            "Only the provider can update this service"
+        );
+        assert!(entry.active, "Cannot update a deactivated service");
+
+        // Preserve immutable / reputation-bearing fields. Endpoint is intentionally
+        // excluded — rotating URLs is a new identity and requires re-registration.
+        let reputation = entry.reputation;
+        let registered_at = entry.registered_at;
+
+        entry.price_usdc = price_usdc;
+        entry.description = description;
+        entry.pay_to = pay_to;
+        entry.reputation = reputation;
+        entry.registered_at = registered_at;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Service(id), &entry);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Service(id), MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (Symbol::new(&env, "service_updated"), id),
+            provider,
+        );
+    }
+
     pub fn deactivate_service(env: Env, provider: Address, id: u64) {
         provider.require_auth();
 
@@ -1288,6 +1343,72 @@ mod test {
                 &String::from_str(&env, &max_category),
             )
             .is_ok());
+    }
+
+    #[test]
+    fn test_update_service_preserves_reputation_and_endpoint() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let id = registry.register_service(
+            &provider,
+            &String::from_str(&env, "Weather API"),
+            &String::from_str(&env, "Original description for the service"),
+            &String::from_str(&env, "https://original.example.com"),
+            &String::from_str(&env, "0.001"),
+            &String::from_str(&env, "G_ORIGINAL_PAYMENT"),
+            &String::from_str(&env, "weather"),
+        );
+
+        env.as_contract(&registry.address, || {
+            let mut entry = LodestarRegistry::get_service(env.clone(), id);
+            entry.reputation = 5;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Service(id), &entry);
+        });
+
+        registry.update_service(
+            &provider,
+            &id,
+            &String::from_str(&env, "0.002"),
+            &String::from_str(&env, "Updated description for the service"),
+            &String::from_str(&env, "G_UPDATED_PAYMENT"),
+        );
+
+        let updated = registry.get_service(&id);
+        assert_eq!(updated.price_usdc, String::from_str(&env, "0.002"));
+        assert_eq!(
+            updated.description,
+            String::from_str(&env, "Updated description for the service")
+        );
+        assert_eq!(updated.pay_to, String::from_str(&env, "G_UPDATED_PAYMENT"));
+        assert_eq!(updated.reputation, 5);
+        assert_eq!(
+            updated.endpoint,
+            String::from_str(&env, "https://original.example.com")
+        );
+    }
+
+    #[test]
+    fn test_update_service_rejects_non_provider() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let id = register_a_service(&env, &registry);
+        let stranger = Address::generate(&env);
+
+        assert!(registry
+            .try_update_service(
+                &stranger,
+                &id,
+                &String::from_str(&env, "0.002"),
+                &String::from_str(&env, "Updated description for the service"),
+                &String::from_str(&env, "G_UPDATED_PAYMENT"),
+            )
+            .is_err());
     }
 
     #[test]

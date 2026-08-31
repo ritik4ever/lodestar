@@ -394,6 +394,54 @@ router.post("/registry/prepare-register", writeRateLimiter(), async (req, res) =
   }
 });
 
+router.post("/registry/prepare-update", writeRateLimiter(), async (req, res) => {
+  try {
+    const {
+      id,
+      description,
+      priceUsdc,
+      providerAddress,
+      payTo,
+    } = req.body ?? {};
+
+    if (!isValidStellarAddress(providerAddress)) {
+      return res.status(400).json({ error: "`providerAddress` must be a valid Stellar address", code: "INVALID_BODY" });
+    }
+
+    const parsedId = parsePositiveSafeInteger(id);
+    if (parsedId == null) {
+      return res.status(400).json({ error: "`id` must be a positive integer", code: "INVALID_BODY" });
+    }
+    if (typeof description !== "string" || description.trim().length < 10 || description.trim().length > 256) {
+      return res.status(400).json({ error: "`description` must be 10-256 characters", code: "INVALID_BODY" });
+    }
+
+    const normalizedPriceUsdc = normalizePriceUsdc(priceUsdc);
+    if (!normalizedPriceUsdc) {
+      return res.status(400).json({ error: "`priceUsdc` must be at least 0.0001", code: "INVALID_BODY" });
+    }
+    if (payTo !== undefined && (typeof payTo !== "string" || payTo.trim().length === 0)) {
+      return res.status(400).json({ error: "`payTo` must be a non-empty string when provided", code: "INVALID_BODY" });
+    }
+
+    const prepared = await buildUnsignedRegistryTx("update", providerAddress, {
+      id: parsedId,
+      description: description.trim(),
+      priceUsdc: normalizedPriceUsdc,
+      payTo: payTo?.trim(),
+    });
+    logger.info({ providerAddress, id: parsedId }, "Built unsigned registry update tx");
+    res.json(prepared);
+  } catch (err) {
+    if (err instanceof ContractError) {
+      const status = err.code === "TRANSACTION_TIMEOUT" ? 504 : 400;
+      return res.status(status).json({ error: err.message, code: err.code });
+    }
+    logger.error({ err }, "POST /api/registry/prepare-update failed");
+    res.status(500).json({ error: "Failed to build transaction", code: "BUILD_TX_ERROR" });
+  }
+});
+
 router.post("/registry/prepare-deactivate", writeRateLimiter(), async (req, res) => {
   try {
     const { providerAddress, id } = req.body ?? {};
