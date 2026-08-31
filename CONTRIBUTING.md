@@ -60,6 +60,9 @@ All of the above run automatically on every PR and push to `main` via GitHub Act
 
 ## Code style
 
+This project uses [EditorConfig](https://editorconfig.org) to maintain consistent formatting across editors and languages. Ensure your editor supports EditorConfig to automatically apply the project's indentation and line-ending settings.
+
+- Rust: run `cargo fmt` before committing; `cargo fmt --all --check` runs in CI under the `contract-build` job
 - We use Husky and `lint-staged` to automatically run Prettier, ESLint, and `cargo fmt` on staged files before every commit.
 - In an emergency, you can skip these hooks by passing `--no-verify` to your git commit command: `git commit --no-verify -m "..."`.
 - Rust: `cargo fmt --all --check` runs in CI under the `contract-build` job

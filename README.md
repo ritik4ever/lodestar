@@ -112,6 +112,18 @@ Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. 
 
 ---
 
+## Dependency Overrides
+
+The frontend uses an npm override in `package.json` to resolve a peer dependency conflict:
+
+- `@creit-tech/stellar-wallets-kit` bundles `@stellar/stellar-sdk@^16.0.0`
+- Its dependency `@trezor/connect-plugin-stellar` requires `@stellar/stellar-sdk@^13.3.0`
+- The project uses `@stellar/stellar-sdk@^13.0.0`
+
+The override forces the wallets kit to use the project's SDK version (13.x) to satisfy the Trezor plugin's peer dependency requirement. This allows the frontend to use `npm ci` in CI instead of `npm install --legacy-peer-deps`, ensuring reproducible builds.
+
+---
+
 ## Prerequisites
 
 - Node.js v22+
