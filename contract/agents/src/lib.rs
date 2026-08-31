@@ -19,6 +19,16 @@ const SCORE_SUCCESS: i32 = 10;
 const SCORE_FAILURE: i32 = -25;
 const FLAG_PENALTY: i32 = -200;
 
+// ── Default spending limits (Issue #323) ─────────────────────────────────────
+// Freshly registered agents MUST NOT be effectively unlimited. The safe default
+// for a spending cap is restrictive, not permissive:
+//   * DEFAULT_MAX_PER_TX_STROOPS  = 500 USDC   (500_000_000 stroops)
+//   * DEFAULT_MAX_PER_DAY_STROOPS = 5_000 USDC (5_000_000_000 stroops)
+// Raising a limit is an explicit, owner-authorized `update_policy` call; the
+// contract never widens a policy on its own.
+pub const DEFAULT_MAX_PER_TX_STROOPS: i128 = 500_000_000;
+pub const DEFAULT_MAX_PER_DAY_STROOPS: i128 = 5_000_000_000;
+
 // ── Storage keys ─────────────────────────────────────────────────────────────
 #[contracttype]
 #[derive(Clone)]
@@ -213,11 +223,13 @@ impl LodestarAgents {
             .persistent()
             .extend_ttl(&count_key, MAX_TTL, MAX_TTL);
 
-        // Default spending policy
+        // Default spending policy — CONSERVATIVE DEFAULTS (see constants above).
+        // Raising these limits is an explicit, owner-authorized `update_policy`
+        // call; the contract never widens a policy on its own.
         let policy = SpendingPolicy {
             agent_address: agent_address.clone(),
-            max_per_tx_stroops: 10_000_000_000i128,   // 1,000,000 USDC stroops
-            max_per_day_stroops: 100_000_000_000i128,  // 10,000,000 USDC stroops
+            max_per_tx_stroops: DEFAULT_MAX_PER_TX_STROOPS,
+            max_per_day_stroops: DEFAULT_MAX_PER_DAY_STROOPS,
             allowed_categories: vec![&env],
             min_score_to_earn: 0,
             daily_spent_stroops: 0,

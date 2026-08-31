@@ -71,3 +71,35 @@ This will register three demo agents with varying scores:
 - **NewAgent**: ~110 score
 - **EstablishedAgent**: ~600 score
 - **TrustedAgent**: ~1000 score (max)
+
+## 5. Default Spending Limits (Issue #323)
+
+Every freshly registered agent starts with **conservative** spending caps,
+defined as named constants in `contract/agents/src/lib.rs`:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `DEFAULT_MAX_PER_TX_STROOPS` | `500_000_000` | 500 USDC per transaction |
+| `DEFAULT_MAX_PER_DAY_STROOPS` | `5_000_000_000` | 5,000 USDC per day |
+
+These defaults are intentionally restrictive — a freshly registered agent
+cannot spend effectively unlimited amounts. The contract never widens a
+policy on its own.
+
+**Raising the limits is an explicit, owner-authorized call.** Only the
+agent's registered owner may invoke `update_policy` (it enforces
+`caller.require_auth()` and checks `agent.owner == caller`):
+
+```sh
+stellar contract invoke \
+  --id <AGENTS_CONTRACT_ID> \
+  --source <OWNER> \
+  --network testnet \
+  -- update_policy \
+    --agent_address <AGENT_ADDRESS> \
+    --max_per_tx_stroops <NEW_PER_TX> \
+    --max_per_day_stroops <NEW_PER_DAY> \
+    --allowed_categories '[]' \
+    --min_score_to_earn 0 \
+    --caller <OWNER_ADDRESS>
+```
