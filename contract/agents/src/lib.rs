@@ -24,7 +24,16 @@ const FLAG_PENALTY: i32 = -200;
 #[derive(Clone)]
 pub enum DataKey {
     AgentCount,
+    /// Legacy index written by pre-indexed deployments: a monolithic
+    /// `Vec<Address>` of every registered agent. Kept only so the one-time
+    /// `migrate_agent_index` upgrade path can backfill existing on-chain data
+    /// into the `AgentAt(u64)` keys. No new code writes to this key.
     AgentIds,
+    /// Indexed registry: `AgentAt(i)` holds the address of the i-th registered
+    /// agent (0-based, in registration order). Each registration writes exactly
+    /// one new key, so `register_agent` is O(1) instead of rewriting the whole
+    /// list on every call.
+    AgentAt(u64),
     Agent(Address),
     Policy(Address),
     RegistryContract,
@@ -187,27 +196,21 @@ impl LodestarAgents {
         env.storage().persistent().set(&key, &entry);
         env.storage().persistent().extend_ttl(&key, MAX_TTL, MAX_TTL);
 
-        // Update agent IDs list
-        let ids_key = DataKey::AgentIds;
-        let mut ids: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&ids_key)
-            .unwrap_or_else(|| vec![&env]);
-        ids.push_back(agent_address.clone());
-        env.storage().persistent().set(&ids_key, &ids);
-        env.storage()
-            .persistent()
-            .extend_ttl(&ids_key, MAX_TTL, MAX_TTL);
-
-        // Update count
+        // O(1) index: append exactly one new `AgentAt(count)` key and bump the
+        // count. This never reads or rewrites the legacy monolithic `AgentIds`
+        // vector, so registration cost is independent of existing agent count.
         let count_key = DataKey::AgentCount;
-        let count: u64 = env
+        let new_count: u64 = env
             .storage()
             .persistent()
             .get(&count_key)
-            .unwrap_or(0u64);
-        let new_count = count + 1;
+            .unwrap_or(0u64)
+            + 1;
+        let index_key = DataKey::AgentAt(new_count - 1);
+        env.storage().persistent().set(&index_key, &agent_address);
+        env.storage()
+            .persistent()
+            .extend_ttl(&index_key, MAX_TTL, MAX_TTL);
         env.storage().persistent().set(&count_key, &new_count);
         env.storage()
             .persistent()
@@ -503,19 +506,23 @@ impl LodestarAgents {
             .extend_ttl(&DataKey::Admin, MAX_TTL, MAX_TTL);
     }
 
-    // List agents (paginated by limit)
+    // List agents (paginated by limit) — reads only the first `limit` indexed
+    // entries (O(limit)), never the whole registry.
     pub fn list_agents(env: Env, limit: u32) -> Vec<AgentEntry> {
-        let ids_key = DataKey::AgentIds;
-        let ids: Vec<Address> = env
+        let count: u64 = env
             .storage()
             .persistent()
-            .get(&ids_key)
-            .unwrap_or_else(|| vec![&env]);
+            .get(&DataKey::AgentCount)
+            .unwrap_or(0u64);
 
         let mut result: Vec<AgentEntry> = vec![&env];
-        let max = (limit as usize).min(ids.len() as usize);
-        for i in 0..max {
-            let addr = ids.get(i as u32).unwrap();
+        let total = (limit as u64).min(count);
+        for i in 0..total {
+            let addr: Address = env
+                .storage()
+                .persistent()
+                .get(&DataKey::AgentAt(i))
+                .expect("agent index out of sync — migrate_agent_index() required");
             if let Some(agent) = env
                 .storage()
                 .persistent()
@@ -527,24 +534,27 @@ impl LodestarAgents {
         result
     }
 
-    // List a single page of agents in registration order (avoids O(n) reads for large sets)
+    // List a single page of agents in registration order — reads only the
+    // page's indexed entries (O(page_size)), not the full registry.
     pub fn list_agents_page(env: Env, page: u32, page_size: u32) -> Vec<AgentEntry> {
-        let ids_key = DataKey::AgentIds;
-        let ids: Vec<Address> = env
+        let count: u64 = env
             .storage()
             .persistent()
-            .get(&ids_key)
-            .unwrap_or_else(|| vec![&env]);
+            .get(&DataKey::AgentCount)
+            .unwrap_or(0u64);
 
         let mut result: Vec<AgentEntry> = vec![&env];
-        let total = ids.len() as usize;
-        let start = (page as usize).saturating_mul(page_size as usize);
-        if start >= total {
+        let start = (page as u64).saturating_mul(page_size as u64);
+        if start >= count {
             return result;
         }
-        let end = (start + page_size as usize).min(total);
+        let end = (start + page_size as u64).min(count);
         for i in start..end {
-            let addr = ids.get(i as u32).unwrap();
+            let addr: Address = env
+                .storage()
+                .persistent()
+                .get(&DataKey::AgentAt(i))
+                .expect("agent index out of sync — migrate_agent_index() required");
             if let Some(agent) = env
                 .storage()
                 .persistent()
@@ -554,6 +564,55 @@ impl LodestarAgents {
             }
         }
         result
+    }
+
+    /// One-time migration for deployments that registered agents before the
+    /// indexed `AgentAt(u64)` layout. Backfills indexed keys from the legacy
+    /// monolithic `DataKey::AgentIds` vector, sets `AgentCount`, then deletes
+    /// the legacy key so it can never be read or double-migrated again.
+    ///
+    /// Admin-only. Must be invoked once after upgrading an existing deployment
+    /// and before any new `register_agent` or listing call. Returns the number
+    /// of agents indexed. New deployments (no legacy vector) have nothing to
+    /// migrate.
+    pub fn migrate_agent_index(env: Env, caller: Address) -> u64 {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("admin not set — call initialize() first");
+        if caller != admin {
+            panic!("unauthorized");
+        }
+
+        let ids_key = DataKey::AgentIds;
+        if !env.storage().persistent().has(&ids_key) {
+            panic!("no legacy agent index to migrate");
+        }
+        let ids: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&ids_key)
+            .expect("unreachable");
+        let count = ids.len() as u64;
+        for i in 0..count {
+            let index_key = DataKey::AgentAt(i);
+            env.storage()
+                .persistent()
+                .set(&index_key, &ids.get(i as u32).unwrap());
+            env.storage()
+                .persistent()
+                .extend_ttl(&index_key, MAX_TTL, MAX_TTL);
+        }
+
+        env.storage().persistent().set(&DataKey::AgentCount, &count);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::AgentCount, MAX_TTL, MAX_TTL);
+        env.storage().persistent().remove(&ids_key);
+        count
     }
 
     // Get total agent count
@@ -1294,5 +1353,199 @@ mod test {
         
         // Should allow full amount again after reset
         assert!(client.check_spending_allowed(&agent_addr, &1000));
+    }
+
+    /// Regression: indexed registration must keep `list_agents`/
+    /// `list_agents_page` correct with 200 agents, and must never re-create the
+    /// legacy monolithic vector.
+    #[test]
+    fn test_register_agent_indexed_200() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let name = String::from_str(&env, "Agent");
+        let desc = String::from_str(&env, "a test agent");
+
+        let mut addrs: Vec<Address> = vec![&env];
+        for _ in 0..200u32 {
+            let addr = Address::generate(&env);
+            addrs.push_back(addr.clone());
+            client.register_agent(&addr, &name, &desc, &addr);
+        }
+
+        assert_eq!(client.get_agent_count(), 200);
+
+        let first_page = client.list_agents(20);
+        assert_eq!(first_page.len(), 20);
+        assert_eq!(first_page.get(0).unwrap().address, addrs.get(0).unwrap());
+        assert_eq!(first_page.get(19).unwrap().address, addrs.get(19).unwrap());
+
+        for page in 0..10u32 {
+            let batch = client.list_agents_page(page, 20);
+            assert_eq!(batch.len(), 20);
+            assert_eq!(
+                batch.get(0).unwrap().address,
+                addrs.get(page * 20).unwrap()
+            );
+        }
+        assert_eq!(client.list_agents_page(10, 20).len(), 0);
+        assert_eq!(client.list_agents_page(0, 201).len(), 200);
+
+        // The indexed keys physically exist; the legacy vector must not.
+        env.as_contract(&contract_id, || {
+            assert!(env.storage().persistent().has(&DataKey::AgentAt(0)));
+            assert!(env.storage().persistent().has(&DataKey::AgentAt(199)));
+            assert!(!env.storage().persistent().has(&DataKey::AgentAt(200)));
+            assert!(!env.storage().persistent().has(&DataKey::AgentIds));
+        });
+    }
+
+    /// Flat-cost proof: registering the i-th agent must not grow more expensive
+    /// as i grows. If `register_agent` rewrote a monolithic vector, the cost of
+    /// the last of 200 registrations would be ~200x the first. Here every
+    /// registration writes exactly one new index key, so later registrations
+    /// must stay within a small bound of earlier ones.
+    #[test]
+    fn test_register_agent_cost_is_flat() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let name = String::from_str(&env, "Test Agent");
+        let desc = String::from_str(&env, "A test agent description");
+
+        // Pre-generate addresses so per-call budget deltas measure only the
+        // registration call itself.
+        let mut pairs: Vec<(Address, Address)> = vec![&env];
+        for _ in 0..200u32 {
+            pairs.push_back((Address::generate(&env), Address::generate(&env)));
+        }
+
+        let mut cpu: Vec<u64> = vec![&env];
+        let mut mem: Vec<u64> = vec![&env];
+        for i in 0..200u32 {
+            let (addr, owner) = pairs.get(i).unwrap();
+            env.budget().reset_tracker();
+            client.register_agent(&addr, &name, &desc, &owner);
+            cpu.push_back(env.budget().cpu_instruction_cost());
+            mem.push_back(env.budget().memory_bytes_cost());
+        }
+
+        // Compare early registrations (1..100) against later ones (100..200).
+        // In an O(n) layout later costs grow linearly; here they must be flat
+        // (2x is a generous bound that still catches ~200x linear growth).
+        let mut early_cpu_min = u64::MAX;
+        for i in 1..100u32 {
+            early_cpu_min = early_cpu_min.min(cpu.get(i).unwrap());
+        }
+        let mut late_cpu_max = 0u64;
+        for i in 100..200u32 {
+            late_cpu_max = late_cpu_max.max(cpu.get(i).unwrap());
+        }
+        assert!(
+            late_cpu_max <= early_cpu_min.saturating_mul(2),
+            "cpu cost per registration grows with agent count: early min {early_cpu_min}, late max {late_cpu_max}"
+        );
+
+        let mut early_mem_min = u64::MAX;
+        for i in 1..100u32 {
+            early_mem_min = early_mem_min.min(mem.get(i).unwrap());
+        }
+        let mut late_mem_max = 0u64;
+        for i in 100..200u32 {
+            late_mem_max = late_mem_max.max(mem.get(i).unwrap());
+        }
+        assert!(
+            late_mem_max <= early_mem_min.saturating_mul(2),
+            "memory cost per registration grows with agent count: early min {early_mem_min}, late max {late_mem_max}"
+        );
+    }
+
+    /// Upgrade path: a pre-indexed deployment has the legacy `AgentIds` vector
+    /// in storage and no `AgentAt` keys. `migrate_agent_index` backfills the
+    /// indexed keys, fixes the count, removes the legacy vector, and refuses to
+    /// run twice.
+    #[test]
+    fn test_migrate_agent_index() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, admin) = setup_with_registry(&env);
+
+        // Simulate a legacy deployment: three agents with `Agent` entries plus
+        // the monolithic `AgentIds` vector, and NO `AgentAt` keys.
+        let mut legacy_addrs: Vec<Address> = vec![&env];
+        legacy_addrs.push_back(Address::generate(&env));
+        legacy_addrs.push_back(Address::generate(&env));
+        legacy_addrs.push_back(Address::generate(&env));
+
+        let name = String::from_str(&env, "Legacy Agent");
+        let desc = String::from_str(&env, "pre-indexed agent");
+        env.as_contract(&contract_id, || {
+            let mut ids: Vec<Address> = vec![&env];
+            let n_legacy = legacy_addrs.len();
+            for i in 0..n_legacy {
+                let addr = legacy_addrs.get(i).unwrap();
+                let now = env.ledger().sequence() as u64;
+                let entry = AgentEntry {
+                    address: addr.clone(),
+                    name: name.clone(),
+                    description: desc.clone(),
+                    owner: addr.clone(),
+                    score: INITIAL_SCORE,
+                    total_payments: 0,
+                    successful_payments: 0,
+                    failed_payments: 0,
+                    total_volume_stroops: 0,
+                    registered_at: now,
+                    last_active: now,
+                    active: true,
+                    flagged: false,
+                    flag_reason: String::from_str(&env, ""),
+                };
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Agent(addr.clone()), &entry);
+                env.storage().persistent().extend_ttl(
+                    &DataKey::Agent(addr.clone()),
+                    TEST_MAX_TTL,
+                    TEST_MAX_TTL,
+                );
+                ids.push_back(addr.clone());
+            }
+            env.storage().persistent().set(&DataKey::AgentIds, &ids);
+            env.storage()
+                .persistent()
+                .extend_ttl(&DataKey::AgentIds, TEST_MAX_TTL, TEST_MAX_TTL);
+        });
+
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        // Non-admin cannot migrate.
+        let stranger = Address::generate(&env);
+        assert!(client.try_migrate_agent_index(&stranger).is_err());
+
+        let migrated = client.migrate_agent_index(&admin);
+        assert_eq!(migrated, 3);
+        assert_eq!(client.get_agent_count(), 3);
+
+        // Listing now works through indexed keys in registration order.
+        let page = client.list_agents_page(0, 10);
+        assert_eq!(page.len(), 3);
+        assert_eq!(page.get(0).unwrap().address, legacy_addrs.get(0).unwrap());
+        assert_eq!(page.get(2).unwrap().address, legacy_addrs.get(2).unwrap());
+
+        // Second call is refused — no legacy vector remains.
+        assert!(client.try_migrate_agent_index(&admin).is_err());
+
+        // Indexed keys exist; legacy vector gone.
+        env.as_contract(&contract_id, || {
+            assert!(env.storage().persistent().has(&DataKey::AgentAt(0)));
+            assert!(env.storage().persistent().has(&DataKey::AgentAt(2)));
+            assert!(!env.storage().persistent().has(&DataKey::AgentIds));
+        });
     }
 }

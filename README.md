@@ -290,7 +290,7 @@ The original implementation called `fetchAgents(100)` on every page load, which 
 
 The fix spans three layers:
 
-**1. Soroban contract** (`contract/agents/src/lib.rs`): Added `list_agents_page(page, page_size)` — reads only `page_size` entries from a specific offset in the `AgentIds` vec, keeping each simulation well within compute limits regardless of total agent count.
+**1. Soroban contract** (`contract/agents/src/lib.rs`): `register_agent` writes an O(1) indexed key `AgentAt(i)` (instead of rewriting a monolithic `AgentIds` vec), and `list_agents_page(page, page_size)` reads only the `page_size` `AgentAt` entries for that page, keeping each simulation well within compute limits regardless of total agent count. Existing deployments with agents already registered must run the one-time admin `migrate_agent_index` backfill after upgrading (see `contract/agents/DEPLOY.md` §5).
 
 **2. Backend** (`backend/src/routes/agents.js`): The `GET /api/agents` route now accepts `?page=N&pageSize=M&sort=score|payments|newest`. An in-memory cache holds the full sorted agent list for 30 seconds (matching the frontend refresh interval), so Soroban is queried at most once per 30s no matter how many page changes the user makes. The route sorts from the cache and returns only the requested slice. The `/api/agents/stats` endpoint shares the same cache. When a new agent registers, the cache is invalidated immediately.
 

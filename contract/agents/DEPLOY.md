@@ -71,3 +71,35 @@ This will register three demo agents with varying scores:
 - **NewAgent**: ~110 score
 - **EstablishedAgent**: ~600 score
 - **TrustedAgent**: ~1000 score (max)
+
+## 5. Upgrading Existing Deployments (Indexed Registration)
+
+Newer builds register agents against an **indexed layout** (`DataKey::AgentAt(i)`)
+so `register_agent` is O(1) and listing reads only the requested pages. Older
+deployments stored every agent in a monolithic `DataKey::AgentIds` vector that
+was rewritten on every registration.
+
+- **Fresh deployments:** Nothing to do. `register_agent` never writes the legacy
+  vector, so there is never anything to migrate.
+- **Existing deployments that already registered agents:** after installing the
+  new WASM build, the admin **must** run the one-time backfill **before any new
+  `register_agent` or listing call**:
+
+```sh
+stellar contract invoke \
+  --id <AGENTS_CONTRACT_ID> \
+  --source admin \
+  --network testnet \
+  -- migrate_agent_index --caller <ADMIN_ADDRESS>
+```
+
+`migrate_agent_index`:
+1. Reads the legacy `AgentIds` vector.
+2. Backfills each address into `AgentAt(0)…AgentAt(n-1)`.
+3. Sets `AgentCount` to the migrated count.
+4. Deletes the legacy `AgentIds` key.
+
+It is admin-only, idempotent by construction (a second call fails because the
+legacy key is already gone), and returns the number of agents indexed. Skipping
+it leaves the index empty and out of sync with `AgentCount`, which makes
+`list_agents`/`list_agents_page` panic until migration is run.
