@@ -182,7 +182,7 @@ The `register_service` function enforces the following field limits on-chain:
 |-------|-----|-----|-------|
 | `name` | 3 | 64 | |
 | `description` | 10 | 256 | |
-| `endpoint` | — | 256 | |
+| `endpoint` | 8 | 256 | Must start with `https://` — see [Provider Registration](../docs/provider-registration.md) |
 | `category` | 1 | 32 | |
 
 Submissions exceeding these limits are rejected with a typed assertion error.
