@@ -101,6 +101,34 @@ async function fetchWithTimeout(resource, init = {}) {
   }
 }
 
+// ── HMAC secret validation ────────────────────────────────────────────────────
+// An empty secret silently disables request signing, which is a security
+// downgrade that can go unnoticed for a long time.  We surface it loudly:
+//   • In production (NODE_ENV=production) — refuse to start.
+//   • In all other environments          — emit a prominent warn-level log.
+// Exported so the test suite can invoke it directly with controlled env state.
+
+export function validateHmacSecret() {
+  if (LODESTAR_HMAC_SECRET !== '') return;
+
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (isProduction) {
+    throw new Error(
+      'LODESTAR_HMAC_SECRET must be set in production. ' +
+      'Payment-record requests will be unauthenticated without it. ' +
+      'Set a strong secret in your environment or .env file.'
+    );
+  }
+
+  // Non-production: emit a prominent warning so the gap is visible in logs.
+  logger.warn(
+    { event: 'hmac_secret_missing' },
+    'LODESTAR_HMAC_SECRET is not set — payment-record requests will be ' +
+    'unauthenticated. Set this value before deploying to production.'
+  );
+}
+
+validateHmacSecret();
 // ── Canonical event names ─────────────────────────────────────────────────────
 
 export const EVENT = {

@@ -42,7 +42,7 @@ const mockHttpClient = {
   fetch: (...args) => global.fetch(...args),
 };
 
-const { runTask, main, EVENT } = await import('./agent.js');
+const { runTask, main, EVENT, validateHmacSecret } = await import('./agent.js');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -584,5 +584,59 @@ describe('graceful shutdown', () => {
 
     // completeShutdown calls process.exit(1) which would throw in test, so we just verify initiate
     expect(initCall[0]).toHaveProperty('signal', 'SIGTERM');
+  });
+});
+
+describe('validateHmacSecret', () => {
+  // validateHmacSecret is imported at the top of the file alongside runTask/EVENT.
+
+  // Capture and restore NODE_ENV around each test so we don't pollute the suite.
+  let originalNodeEnv;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalNodeEnv = process.env.NODE_ENV;
+  });
+  afterEach(() => {
+    process.env.NODE_ENV = originalNodeEnv;
+  });
+
+  it('emits a warn-level log when LODESTAR_HMAC_SECRET is empty and NODE_ENV is not production', () => {
+    // The module was loaded without LODESTAR_HMAC_SECRET, so the const is ''.
+    delete process.env.NODE_ENV; // not 'production'
+    validateHmacSecret();
+
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    const [fields, msg] = logWarn.mock.calls[0];
+    expect(fields).toMatchObject({ event: 'hmac_secret_missing' });
+    expect(msg).toMatch(/unauthenticated/i);
+  });
+
+  it('does not emit a warning in development when LODESTAR_HMAC_SECRET is empty', () => {
+    process.env.NODE_ENV = 'development';
+    // Should warn (not throw) — same as the general non-production case.
+    expect(() => validateHmacSecret()).not.toThrow();
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn.mock.calls[0][0]).toMatchObject({ event: 'hmac_secret_missing' });
+  });
+
+  it('throws an error when LODESTAR_HMAC_SECRET is empty and NODE_ENV is production', () => {
+    process.env.NODE_ENV = 'production';
+    expect(() => validateHmacSecret()).toThrow(
+      /LODESTAR_HMAC_SECRET must be set in production/
+    );
+    // Must not log a warning — it throws instead.
+    expect(logWarn).not.toHaveBeenCalled();
+  });
+
+  it('production error message contains actionable instructions', () => {
+    process.env.NODE_ENV = 'production';
+    let message = '';
+    try {
+      validateHmacSecret();
+    } catch (err) {
+      message = err.message;
+    }
+    expect(message).toMatch(/unauthenticated/i);
+    expect(message).toMatch(/environment or \.env file/i);
   });
 });
