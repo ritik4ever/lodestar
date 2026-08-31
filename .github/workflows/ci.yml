@@ -147,3 +147,44 @@ jobs:
       - name: Run tests
         working-directory: agent
         run: npm test
+
+  # ── End-to-end integration test ───────────────────────────────────────────
+  e2e-test:
+    name: End-to-end integration test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,wasm32v1-none
+          components: rustfmt
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install system dependencies for stellar-cli
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libssl-dev libudev-dev
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli
+
+      - name: Build contracts
+        run: |
+          cd contract
+          rustup target add wasm32v1-none
+          stellar contract build
+          cd agents
+          rustup target add wasm32v1-none
+          stellar contract build
+
+      - name: Run end-to-end integration test
+        run: ./scripts/e2e-test.sh
+        env:
+          STELLAR_RPC_URL: https://soroban-testnet.stellar.org
