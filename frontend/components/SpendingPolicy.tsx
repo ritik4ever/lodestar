@@ -155,7 +155,7 @@ export default function SpendingPolicyDisplay({ policy, walletAddress, agentOwne
                 max="1000"
               />
               <p className="text-[11px] text-secondary mt-1">
-                Agents below this score won&apos;t gain score from payments. Set 0 to allow all.
+                Agents below this score earn at a reduced rate (+2 instead of +10). Set 0 for full rate.
               </p>
             </div>
             <div>
@@ -207,7 +207,7 @@ export default function SpendingPolicyDisplay({ policy, walletAddress, agentOwne
             <PolicyRow
               label="Min score to earn"
               value={policy.min_score_to_earn === 0 ? 'None' : String(policy.min_score_to_earn)}
-              tooltip="Agents below this score will not gain score from successful payments (stats still recorded). Set to 0 to allow all agents to earn score."
+              tooltip="Agents at or above this score earn +10 per successful payment; agents below it still earn at a reduced +2 rate, so a low score is always recoverable. Set to 0 to give every agent the full rate."
             />
             <PolicyRow
               label="Allowed categories"
