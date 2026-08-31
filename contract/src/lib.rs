@@ -402,7 +402,7 @@ impl LodestarRegistry {
             .storage()
             .persistent()
             .get(&cat_key)
-            .expect("Category index not found");
+            .unwrap_or_else(|| vec![&env]);
         let mut updated: Vec<u64> = vec![&env];
         for cid in cat_ids.iter() {
             if cid != id {
@@ -1299,5 +1299,43 @@ mod test {
         let (min, max) = registry.get_reputation_bounds();
         assert_eq!(min, MIN_REPUTATION);
         assert_eq!(max, MAX_REPUTATION);
+    }
+
+    #[test]
+    fn test_deactivate_service_without_category_index() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let registry_id = env.register(LodestarRegistry, (Address::generate(&env),));
+        let registry = LodestarRegistryClient::new(&env, &registry_id);
+        let provider = Address::generate(&env);
+
+        // Construct a service entry WITHOUT a category index (e.g. one where the
+        // category index was pruned by TTL expiry while the entry survived).
+        env.clone().as_contract(&registry_id, || {
+            let entry = ServiceEntry {
+                id: 1,
+                name: String::from_str(&env, "Orphaned Service"),
+                description: String::from_str(&env, "No category index present"),
+                endpoint: String::from_str(&env, "https://test.com"),
+                price_usdc: String::from_str(&env, "10"),
+                pay_to: String::from_str(&env, "G_TEST_PAYMENT"),
+                category: String::from_str(&env, "compute"),
+                provider: provider.clone(),
+                reputation: 0,
+                active: true,
+                registered_at: env.ledger().sequence() as u64,
+            };
+            env.storage()
+                .persistent()
+                .set(&DataKey::Service(1), &entry);
+            // Deliberately omit the ServiceIdsByCategory index.
+        });
+
+        // Deactivation must succeed (best-effort cleanup, no panic) even though
+        // the category index is absent.
+        registry.deactivate_service(&provider, &1u64);
+
+        let service = registry.get_service(&1u64);
+        assert!(!service.active);
     }
 }
