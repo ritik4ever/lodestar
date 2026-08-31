@@ -1,5 +1,13 @@
 #![no_std]
 
+//! Immutable on-chain discovery registry for Lodestar x402 endpoints.
+//!
+//! This contract is **deliberately not upgradeable** — see
+//! `docs/adr/0001-contract-immutability.md` (ADR-0001) for the decision and the
+//! v2 migration story. No `update_current_contract_wasm` entrypoint exists and
+//! none may be added without reversing ADR-0001. The regression test
+//! `test_contract_is_not_upgradeable` in this module enforces the invariant.
+
 use soroban_sdk::{
     contract, contractimpl, contracttype, vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
@@ -437,7 +445,7 @@ mod test {
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
-        Address, IntoVal, String,
+        Address, Error, IntoVal, String,
     };
 
     fn setup_service(
@@ -981,6 +989,28 @@ mod test {
         let registry_id = env.register(LodestarRegistry, (agents.clone(),));
         let registry = LodestarRegistryClient::new(&env, &registry_id);
         assert_eq!(registry.get_agents_contract(), Some(agents));
+    }
+
+    #[test]
+    fn test_contract_is_not_upgradeable() {
+        // ADR-0001: the registry is immutable by design. The Soroban upgrade
+        // entrypoint (`update_current_contract_wasm`) must not be exposed; if it
+        // ever appears, every on-chain registry deployed before that change
+        // becomes secretly mutable and the "permanent and permissionless"
+        // promise is broken. A host-level failure here means the entrypoint does
+        // not exist, so no caller — including the deployer — can swap the WASM.
+        let env = Env::default();
+        let registry_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        let result = env.try_invoke_contract::<(), Error>(
+            &registry_id,
+            &Symbol::new(&env, "update_current_contract_wasm"),
+            Vec::new(&env),
+        );
+        assert!(
+            result.is_err(),
+            "immutable contract must not expose an upgrade entrypoint"
+        );
     }
 
     #[test]

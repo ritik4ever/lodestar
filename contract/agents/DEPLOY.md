@@ -2,6 +2,13 @@
 
 The agents contract manages agent registration, credit scoring, and spending policies.
 
+> **Immutability:** this contract is immutable by design — see
+> [`docs/adr/0001-contract-immutability.md`](../../docs/adr/0001-contract-immutability.md)
+> (ADR-0001). It exposes no `update_current_contract_wasm` entrypoint; revisions
+> ship as a new v2 deployment. The `admin` role is operational only: it can
+> flag/deactivate agents and transfer itself, but **cannot** change contract code
+> or scoring rules.
+
 ## 1. Build the contract
 
 ```sh

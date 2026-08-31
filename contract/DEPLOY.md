@@ -4,6 +4,22 @@ This guide covers the deployment of the Lodestar Service Registry. For detailed
 instructions on the Agents credit scoring contract, see
 [contract/agents/DEPLOY.md](./agents/DEPLOY.md).
 
+## Immutability
+
+**Both Lodestar contracts are immutable by design** — see
+[`docs/adr/0001-contract-immutability.md`](../docs/adr/0001-contract-immutability.md)
+(ADR-0001) for the decision, trade-offs, and the full v2 migration story.
+
+- Neither contract exports `update_current_contract_wasm`. No entity — including
+  the deployer — can replace a deployed WASM on-chain.
+- The registry's agents-contract anchor is fixed by its constructor
+  (`--agents_contract`) and can never be re-pointed.
+- The agents contract's `admin` key is **operational, not architectural**: it
+  can flag/deactivate agents and transfer itself, but it cannot change contract
+  code or scoring rules.
+- Any bug fix or feature revision ships as a **new deployment (v2)** — see the
+  [Revision / v2 migration](#revision--v2-migration) section below.
+
 ## Prerequisites
 
 - Rust toolchain (stable)
@@ -188,6 +204,28 @@ The `register_service` function enforces the following field limits on-chain:
 Submissions exceeding these limits are rejected with a typed assertion error.
 The same limits are enforced client-side in the RegisterForm and server-side
 by the `POST /api/registry/prepare-register` route.
+
+## Revision / v2 migration
+
+Because v1 is immutable, a bug fix or feature revision ships as a **v2
+deployment**, never an in-place upgrade. The full rationale is in
+[ADR-0001](../docs/adr/0001-contract-immutability.md).
+
+1. **Build & pin.** Build the new WASM from the revised source, record the
+   SHA-256 hashes of `lodestar_registry.wasm` and `lodestar_agents.wasm` in
+   `contract/deployments.json`, and retain the exact source commit so the
+   deployment is reproducible.
+2. **Deploy v2 agents first**, then **deploy v2 registry** with
+   `--agents_contract <V2_AGENTS_CONTRACT_ID>` (steps 5 and 6 above use the new
+   hashes), then run the one-time `init` linking agents → registry (step 7).
+3. **Migrate records.** Walk the v1 registry with `list_services_page` (paged
+   reads) and re-register each provider's service against v2. New service IDs
+   are assigned by v2; endpoints/prices/categories are carried over as-is.
+   On-chain reputation and vote-cooldown state are **not** auto-migrated — they
+   start fresh on v2.
+4. **Cut over.** Update `contract/deployments.json`, the backend/frontend `.env`
+   contract IDs, and any hosted configuration. v1 remains live and immutable;
+   consumers still reading it keep working until they re-point at v2.
 
 ## Network Details
 
