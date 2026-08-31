@@ -1,0 +1,15 @@
+[
+  {
+    "id": "payment:crash-after-txhash",
+    "status": "resolved",
+    "agentAddress": "GAGENTADDRESSMOCK000000000000000000000000000000000000000",
+    "category": "weather",
+    "serviceId": 1,
+    "serviceName": "WeatherService",
+    "priceUsdc": "0.001",
+    "txHash": "crash-after-txhash",
+    "createdAt": "2026-08-29T21:38:05.687Z",
+    "updatedAt": "2026-08-29T21:38:05.692Z",
+    "resolvedAt": "2026-08-29T21:38:05.691Z"
+  }
+]

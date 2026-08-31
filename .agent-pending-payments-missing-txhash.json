@@ -1,0 +1,78 @@
+[
+  {
+    "id": "payment:missing-txhash",
+    "status": "abandoned",
+    "agentAddress": "GAGENTADDRESSMOCK000000000000000000000000000000000000000",
+    "category": "weather",
+    "serviceId": 1,
+    "serviceName": "WeatherService",
+    "priceUsdc": "0.001",
+    "txHash": null,
+    "createdAt": "2026-08-29T21:38:05.701Z",
+    "updatedAt": "2026-08-29T21:38:05.706Z",
+    "failureReason": "missing_tx_hash_after_crash",
+    "abandonedAt": "2026-08-29T21:38:05.704Z"
+  },
+  {
+    "id": "payment:31dd396e-63df-4ffa-a456-f993a44ebefe",
+    "agentAddress": "GAGENTADDRESSMOCK000000000000000000000000000000000000000",
+    "category": "weather",
+    "serviceId": 1,
+    "serviceName": "WeatherService",
+    "priceUsdc": "0.001",
+    "txHash": "txhash123",
+    "status": "resolved",
+    "createdAt": "2026-08-29T21:38:05.717Z",
+    "updatedAt": "2026-08-29T21:38:05.723Z",
+    "resolvedAt": "2026-08-29T21:38:05.722Z"
+  },
+  {
+    "id": "payment:21c9e2e6-2c2e-4eeb-9cba-f07d347b0a43",
+    "agentAddress": "GAGENTADDRESSMOCK000000000000000000000000000000000000000",
+    "category": "search",
+    "serviceId": 1,
+    "serviceName": "WeatherService",
+    "priceUsdc": "0.001",
+    "txHash": "txhash123",
+    "status": "resolved",
+    "createdAt": "2026-08-29T21:38:05.727Z",
+    "updatedAt": "2026-08-29T21:38:05.735Z",
+    "resolvedAt": "2026-08-29T21:38:05.734Z"
+  },
+  {
+    "id": "payment:9c73bfae-ad24-4dc4-bc08-1c1ed55e60cf",
+    "agentAddress": "GAGENTADDRESSMOCK000000000000000000000000000000000000000",
+    "category": "weather",
+    "serviceId": 1,
+    "serviceName": "SvcA",
+    "priceUsdc": "0.001",
+    "txHash": "txhash123",
+    "status": "awaiting_score_update",
+    "createdAt": "2026-08-29T21:38:05.784Z",
+    "updatedAt": "2026-08-29T21:38:05.842Z"
+  },
+  {
+    "id": "payment:b0548571-e097-4036-8a21-37a005146d50",
+    "agentAddress": "GAGENTADDRESSMOCK000000000000000000000000000000000000000",
+    "category": "weather",
+    "serviceId": 2,
+    "serviceName": "SvcB",
+    "priceUsdc": "0.002",
+    "txHash": "txhash123",
+    "status": "awaiting_score_update",
+    "createdAt": "2026-08-29T21:38:05.791Z",
+    "updatedAt": "2026-08-29T21:38:05.798Z"
+  },
+  {
+    "id": "payment:bff3af10-c32f-4801-b9b3-c8a8149bc27a",
+    "agentAddress": "GAGENTADDRESSMOCK000000000000000000000000000000000000000",
+    "category": "weather",
+    "serviceId": 2,
+    "serviceName": "SvcB",
+    "priceUsdc": "0.002",
+    "txHash": "txhash123",
+    "status": "awaiting_score_update",
+    "createdAt": "2026-08-29T21:38:05.807Z",
+    "updatedAt": "2026-08-29T21:38:05.810Z"
+  }
+]

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "intent-recovery-1",
+    "status": "resolved",
+    "agentAddress": "GAGENTADDRESSMOCK000000000000000000000000000000000000000",
+    "category": "weather",
+    "serviceId": 1,
+    "serviceName": "WeatherService",
+    "priceUsdc": "0.001",
+    "txHash": "recovery-tx-hash-123",
+    "createdAt": "2026-08-29T21:38:05.660Z",
+    "updatedAt": "2026-08-29T21:38:05.674Z",
+    "resolvedAt": "2026-08-29T21:38:05.673Z"
+  }
+]
