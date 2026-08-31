@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { usdcToStroops, stroopsToUsdc, stroopsToUsdcDisplay } from './stroops.js';
+import {
+  usdcToStroops,
+  stroopsToUsdc,
+  stroopsToUsdcDisplay,
+  StroopsError,
+} from './stroops.js';
+
+describe('StroopsError', () => {
+  it('wraps conversion failures with operation context and preserves the cause', () => {
+    try {
+      usdcToStroops('0x1');
+      expect.fail('Expected usdcToStroops to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(StroopsError);
+      expect(err.name).toBe('StroopsError');
+      expect(err.operation).toBe('usdcToStroops');
+      expect(err.input).toEqual({ usdc: '0x1' });
+      expect(err.cause).toBeInstanceOf(Error);
+      expect(err.message).toContain('usdcToStroops');
+      expect(err.message).not.toContain('0x1');
+    }
+  });
+});
 
 describe('usdcToStroops', () => {
   it('converts basic amounts correctly', () => {
