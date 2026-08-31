@@ -45,6 +45,26 @@ migration cost, TTL rent, and what a redeploy would have to preserve.
 
 ## Data Flow
 
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Backend
+    participant Registry as LodestarRegistry
+    participant Agents as LodestarAgents
+    participant Service
+    Agent->>Backend: Request service discovery
+    Backend->>Registry: list_services(category)
+    Registry-->>Backend: Ranked service entries
+    Backend-->>Agent: Endpoint and price
+    Agent->>Service: GET endpoint
+    Service-->>Agent: 402 Payment Required
+    Agent->>Agent: Sign x402 Stellar payment
+    Agent->>Service: GET endpoint + payment proof
+    Service-->>Agent: Service response
+    Agent->>Agents: record_payment(success)
+    Agent->>Registry: update_reputation(result)
+```
+
 1. **Service Registration:**
    `Provider (Frontend)` -> `Backend (prepare-register)` -> `Provider (signs XDR)` -> `Backend (submit-signed-tx)` -> `LodestarRegistry (stores ServiceEntry)`
 2. **Discovery & Access:**

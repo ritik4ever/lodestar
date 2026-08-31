@@ -50,6 +50,10 @@ Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. 
 
 ## Architecture
 
+The complete agent discovery-to-payment sequence is shown in the
+[architecture guide](docs/architecture.md#data-flow), including the registry,
+backend, service, and agent-contract interactions.
+
 > **Note:** For a detailed breakdown of component responsibilities, trust boundaries, failure modes, data flow, and why the system is split this way, see [docs/architecture.md](docs/architecture.md).
 
 ```
