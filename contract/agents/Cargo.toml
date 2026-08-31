@@ -17,6 +17,12 @@ testutils = ["soroban-sdk/testutils"]
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils", "alloc"] }
+# Property-based fuzzing of the score arithmetic (#833).
+proptest = "1"
+
+[profile.test]
+overflow-checks = true
+opt-level = 1
 
 [profile.release]
 opt-level = "z"
