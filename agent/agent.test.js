@@ -14,7 +14,12 @@ const { logInfo, logWarn, logError, logDebug } = vi.hoisted(() => ({
 vi.mock('dotenv/config', () => ({}));
 
 vi.mock('pino', () => ({
-  default: () => ({ info: logInfo, warn: logWarn, error: logError, debug: logDebug }),
+  default: () => ({
+    info: logInfo, warn: logWarn, error: logError, debug: logDebug,
+    // Child loggers share the same mocked sinks so assertions on log calls
+    // keep working with the runId-correlated logger (#820).
+    child: () => ({ info: logInfo, warn: logWarn, error: logError, debug: logDebug }),
+  }),
 }));
 
 vi.mock('@stellar/stellar-sdk', () => ({
@@ -584,5 +589,117 @@ describe('graceful shutdown', () => {
 
     // completeShutdown calls process.exit(1) which would throw in test, so we just verify initiate
     expect(initCall[0]).toHaveProperty('signal', 'SIGTERM');
+  });
+});
+
+// ── #820 — recordOutcome structured logging ──────────────────────────────────
+
+describe('recordOutcome — structured events (#820)', () => {
+  it('emits outcome_recording with the stable field set before the request', async () => {
+    await runTask('weather', (ep) => ep, true, mockHttpClient);
+
+    const call = logInfo.mock.calls.find(([f]) => f?.event === EVENT.OUTCOME_RECORDING);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({
+      event: 'outcome_recording',
+      agentAddress: 'GAGENTADDRESSMOCK000000000000000000000000000000000000000',
+      serviceId: MOCK_SERVICE.id,
+      amountUsdc: MOCK_SERVICE.price_usdc,
+      outcome: 'success',
+    });
+  });
+
+  it('emits outcome_recorded with httpStatus and score transition on success', async () => {
+    await runTask('weather', (ep) => ep, true, mockHttpClient);
+
+    const call = logInfo.mock.calls.find(([f]) => f?.event === EVENT.OUTCOME_RECORDED);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({
+      event: 'outcome_recorded',
+      serviceId: MOCK_SERVICE.id,
+      amountUsdc: MOCK_SERVICE.price_usdc,
+      outcome: 'success',
+      httpStatus: 200,
+      scoreAfter: 110,
+    });
+    // scoreBefore reflects module state carried across runs (null on the very
+    // first recordOutcome, then the previous newScore) — assert the transition
+    // is consistent with the correlated score_updated event instead of an
+    // absolute value, so the test is order-independent.
+    const scoreUpdate = logInfo.mock.calls.find(([f]) => f?.event === EVENT.SCORE_UPDATED);
+    expect(scoreUpdate).toBeDefined();
+    expect(scoreUpdate[0]).toMatchObject({
+      scoreBefore: call[0].scoreBefore,
+      scoreAfter: call[0].scoreAfter,
+    });
+  });
+
+  it('emits outcome_recording with outcome: failure when the endpoint fails', async () => {
+    global.fetch = buildFetch({ endpointOk: false });
+    await runTask('weather', (ep) => ep, true, mockHttpClient);
+
+    const call = logInfo.mock.calls.find(([f]) => f?.event === EVENT.OUTCOME_RECORDING);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({ event: 'outcome_recording', outcome: 'failure' });
+  });
+
+  it('emits outcome_failed with httpStatus when the API rejects the record', async () => {
+    global.fetch = buildFetch({
+      endpointOk: true,
+      services: [
+        {
+          ...MOCK_SERVICE,
+          endpoint: 'https://api.example.com/boom',
+        },
+      ],
+    });
+    // Make the /payment endpoint itself return 403.
+    const inner = global.fetch;
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/payment')) {
+        return Promise.resolve(makeResponse({ ok: false, status: 403 }));
+      }
+      return inner(url);
+    });
+
+    await runTask('weather', (ep) => ep, true, mockHttpClient);
+
+    const call = logWarn.mock.calls.find(([f]) => f?.event === EVENT.OUTCOME_FAILED);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({
+      event: 'outcome_failed',
+      serviceId: MOCK_SERVICE.id,
+      amountUsdc: MOCK_SERVICE.price_usdc,
+      httpStatus: 403,
+    });
+  });
+
+  it('emits outcome_failed with err when the payment request throws', async () => {
+    global.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/payment')) return Promise.reject(new Error('network down'));
+      return buildFetch()(url);
+    });
+
+    await runTask('weather', (ep) => ep, true, mockHttpClient);
+
+    const call = logWarn.mock.calls.find(([f]) => f?.event === EVENT.OUTCOME_FAILED);
+    expect(call).toBeDefined();
+    expect(call[0]).toMatchObject({ event: 'outcome_failed', outcome: 'success' });
+    expect(call[0]?.err).toBeDefined();
+  });
+
+  it('never logs the Stellar secret or HMAC material in any log call', async () => {
+    process.env.LODESTAR_HMAC_SECRET = 'hmac-secret-value-DO-NOT-LOG';
+    try {
+      await runTask('weather', (ep) => ep, true, mockHttpClient);
+
+      const allArgs = [...logInfo.mock.calls, ...logWarn.mock.calls, ...logError.mock.calls, ...logDebug.mock.calls];
+      const serialized = JSON.stringify(allArgs);
+      expect(serialized).not.toContain(process.env.AGENT_STELLAR_SECRET);
+      expect(serialized).not.toContain('hmac-secret-value-DO-NOT-LOG');
+      expect(serialized).not.toContain('X-Lodestar-Signature');
+    } finally {
+      delete process.env.LODESTAR_HMAC_SECRET;
+    }
   });
 });
