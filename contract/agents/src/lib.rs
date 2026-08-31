@@ -7,10 +7,7 @@ use soroban_sdk::{
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const MAX_TTL: u32 = 100_000_000; // extended for tests/CI stability
-#[cfg(not(test))]
-const DAY_LEDGERS: u64 = 17_280; // 86400 / 5
-#[cfg(test)]
-const DAY_LEDGERS: u64 = 5;
+const DAY_LEDGERS: u64 = 17_280; // 86400 / 5 — production default day length in ledgers
 #[cfg(test)]
 const TEST_MAX_TTL: u32 = 100_000_000;
 const MAX_SCORE: i32 = 1_000;
@@ -29,6 +26,7 @@ pub enum DataKey {
     Policy(Address),
     RegistryContract,
     Admin,
+    DayLedgers,
 }
 
 // ServiceEntry shape (mirrors the registry contract) for cross-contract calls
@@ -98,6 +96,15 @@ pub struct LodestarAgents;
 
 // ── Private helpers ────────────────────────────────────────────────────────────
 impl LodestarAgents {
+    /// Read the configured day length in ledgers. Falls back to the production
+    /// default (17_280) for contracts deployed before the value was stored.
+    fn stored_day_ledgers(env: &Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DayLedgers)
+            .unwrap_or(DAY_LEDGERS)
+    }
+
     /// Get the current daily spent amount and reset it if a new day has started.
     /// Returns (daily_spent_stroops, last_reset_ledger) for the current day.
     fn get_daily_spend_with_reset(
@@ -105,7 +112,7 @@ impl LodestarAgents {
         policy: &SpendingPolicy,
     ) -> (i128, u64) {
         let now = env.ledger().sequence() as u64;
-        if now >= policy.last_reset_ledger + DAY_LEDGERS {
+        if now >= policy.last_reset_ledger + Self::stored_day_ledgers(env) {
             (0i128, now)
         } else {
             (policy.daily_spent_stroops, policy.last_reset_ledger)
@@ -147,6 +154,13 @@ impl LodestarAgents {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Admin, MAX_TTL, MAX_TTL);
+
+        // Store the default day length so the daily-reset window is a runtime
+        // config value rather than a compile-time constant.
+        env.storage().persistent().set(&DataKey::DayLedgers, &DAY_LEDGERS);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::DayLedgers, MAX_TTL, MAX_TTL);
     }
 
     // Register a new agent.
@@ -620,6 +634,40 @@ impl LodestarAgents {
             flag_penalty: FLAG_PENALTY,
         }
     }
+
+    // Get the configured day length in ledgers (defaults to 17,280).
+    pub fn get_day_ledgers(env: Env) -> u64 {
+        Self::stored_day_ledgers(&env)
+    }
+
+    // Set the day length in ledgers (admin-only). Makes the daily-reset window
+    // configurable at runtime instead of a compile-time constant, so tests can
+    // exercise reset boundaries with an explicit short day while production
+    // runs the full 24-hour window (17,280 ledgers at 5s per ledger).
+    pub fn set_day_ledgers(env: Env, day_ledgers: u64, caller: Address) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("admin not set — call initialize() first");
+
+        if caller != admin {
+            panic!("unauthorized");
+        }
+
+        if day_ledgers == 0 {
+            panic!("day_ledgers must be greater than zero");
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::DayLedgers, &day_ledgers);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::DayLedgers, MAX_TTL, MAX_TTL);
+    }
 }
 
 #[cfg(test)]
@@ -627,6 +675,11 @@ mod test {
     use super::*;
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::testutils::Ledger as _;
+
+    /// Explicit short day used by the reset tests so they run quickly. The
+    /// production contract defaults to DAY_LEDGERS (17,280); this mirrors the
+    /// old `#[cfg(test)] DAY_LEDGERS = 5` without a compile-time fork.
+    const TEST_DAY_LEDGERS: u64 = 5;
 
     // Mock registry contract for testing
     #[contract]
@@ -672,7 +725,11 @@ mod test {
         
         // Initialize with registry
         client.init(&registry_id);
-        
+
+        // Use an explicit short day so the daily-reset boundary tests exercise
+        // reset behaviour quickly (previously a `#[cfg(test)]` compile-time fork).
+        client.set_day_ledgers(&TEST_DAY_LEDGERS, &admin);
+
         (contract_id, admin)
     }
 
@@ -918,12 +975,12 @@ mod test {
         });
     }
 
-    /// Exact-threshold: at ledger == last_reset + DAY_LEDGERS the counter clears.
+    /// Exact-threshold: at ledger == last_reset + TEST_DAY_LEDGERS the counter clears.
     ///
     /// Sequence:
     ///   ledger 100  — set policy, seed 500 stroops of daily spend
-    ///   ledger 100 + DAY_LEDGERS - 1  — one ledger BEFORE threshold: spend preserved
-    ///   ledger 100 + DAY_LEDGERS      — AT threshold: spend cleared, last_reset updated
+    ///   ledger 100 + TEST_DAY_LEDGERS - 1  — one ledger BEFORE threshold: spend preserved
+    ///   ledger 100 + TEST_DAY_LEDGERS      — AT threshold: spend cleared, last_reset updated
     #[test]
     fn test_daily_reset_boundary_exact_threshold() {
         let env = Env::default();
@@ -955,7 +1012,7 @@ mod test {
         assert_eq!(p.last_reset_ledger, start_ledger as u64);
 
         // ── One ledger BEFORE threshold — spend must be preserved ──────────
-        let before_threshold = start_ledger + DAY_LEDGERS as u32 - 1;
+        let before_threshold = start_ledger + TEST_DAY_LEDGERS as u32 - 1;
         env.ledger().with_mut(|li| {
             li.sequence_number = before_threshold;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -970,7 +1027,7 @@ mod test {
         assert_eq!(p_before.last_reset_ledger, start_ledger as u64);
 
         // ── AT threshold — spend must be cleared, last_reset updated ───────
-        let at_threshold = start_ledger + DAY_LEDGERS as u32;
+        let at_threshold = start_ledger + TEST_DAY_LEDGERS as u32;
         env.ledger().with_mut(|li| {
             li.sequence_number = at_threshold;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1016,7 +1073,7 @@ mod test {
         seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
 
         // ── One before threshold: no reset ──────────────────────────────────
-        let one_before = start_ledger + DAY_LEDGERS as u32 - 1;
+        let one_before = start_ledger + TEST_DAY_LEDGERS as u32 - 1;
         env.ledger().with_mut(|li| {
             li.sequence_number = one_before;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1031,7 +1088,7 @@ mod test {
         assert_eq!(p_before.last_reset_ledger, start_ledger as u64);
 
         // ── At threshold: reset fires ───────────────────────────────────────
-        let at_threshold = start_ledger + DAY_LEDGERS as u32;
+        let at_threshold = start_ledger + TEST_DAY_LEDGERS as u32;
         env.ledger().with_mut(|li| {
             li.sequence_number = at_threshold;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1081,7 +1138,7 @@ mod test {
         assert_eq!(p.last_reset_ledger, start_ledger as u64);
 
         // ── Calling update_policy within the window keeps daily_spent ───────
-        let mid_window = start_ledger + DAY_LEDGERS as u32 - 1;
+        let mid_window = start_ledger + TEST_DAY_LEDGERS as u32 - 1;
         env.ledger().with_mut(|li| {
             li.sequence_number = mid_window;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1096,7 +1153,7 @@ mod test {
         assert_eq!(p_mid.last_reset_ledger, start_ledger as u64);
 
         // ── Calling update_policy at/after threshold resets spend ───────────
-        let after_threshold = start_ledger + DAY_LEDGERS as u32;
+        let after_threshold = start_ledger + TEST_DAY_LEDGERS as u32;
         env.ledger().with_mut(|li| {
             li.sequence_number = after_threshold;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1148,8 +1205,8 @@ mod test {
         let spend_day1 = 200i128;
         seed_daily_spent(&env, &contract_id, &agent_addr, &owner, spend_day1, max_per_day);
 
-        // ── Day 2: first DAY_LEDGERS boundary ───────────────────────────────
-        let day2_ledger = start_ledger + DAY_LEDGERS as u32;
+        // ── Day 2: first TEST_DAY_LEDGERS boundary ──────────────────────────
+        let day2_ledger = start_ledger + TEST_DAY_LEDGERS as u32;
         env.ledger().with_mut(|li| {
             li.sequence_number = day2_ledger;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1178,8 +1235,8 @@ mod test {
             env.storage().persistent().extend_ttl(&key, TEST_MAX_TTL, TEST_MAX_TTL);
         });
 
-        // ── Day 3: second DAY_LEDGERS boundary ──────────────────────────────
-        let day3_ledger = day2_ledger + DAY_LEDGERS as u32;
+        // ── Day 3: second TEST_DAY_LEDGERS boundary ─────────────────────────
+        let day3_ledger = day2_ledger + TEST_DAY_LEDGERS as u32;
         env.ledger().with_mut(|li| {
             li.sequence_number = day3_ledger;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1195,7 +1252,7 @@ mod test {
     }
 
     /// One-ledger-before-threshold: verifies the guard condition is strict (>=),
-    /// so ledger == last_reset + DAY_LEDGERS - 1 does NOT trigger a reset.
+    /// so ledger == last_reset + TEST_DAY_LEDGERS - 1 does NOT trigger a reset.
     #[test]
     fn test_no_reset_one_ledger_before_threshold() {
         let env = Env::default();
@@ -1222,7 +1279,7 @@ mod test {
         seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
 
         // Advance to exactly one ledger before the threshold — must NOT reset
-        let one_before = start_ledger + DAY_LEDGERS as u32 - 1;
+        let one_before = start_ledger + TEST_DAY_LEDGERS as u32 - 1;
         env.ledger().with_mut(|li| {
             li.sequence_number = one_before;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1287,12 +1344,108 @@ mod test {
 
         // Advance to next day
         env.ledger().with_mut(|li| {
-            li.sequence_number = (DAY_LEDGERS + 1) as u32;
+            li.sequence_number = (TEST_DAY_LEDGERS + 1) as u32;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
         
         // Should allow full amount again after reset
         assert!(client.check_spending_allowed(&agent_addr, &1000));
+    }
+
+    /// The daily-reset window defaults to the production 17,280-ledger day:
+    /// spend survives one ledger before the boundary and resets exactly at it.
+    #[test]
+    fn test_daily_reset_uses_production_day_length() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // Register the contracts at a high ledger with a large TTL so the
+        // contract instance survives the 17,280-ledger jump below.
+        let start_ledger: u32 = 100;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = start_ledger;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+
+        // Deploy with default configuration (no explicit short day).
+        let registry_id = env.register_contract(None, MockRegistry);
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+        client.init(&registry_id);
+
+        // Fresh deployments must default to the production day length.
+        assert_eq!(client.get_day_ledgers(), DAY_LEDGERS);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        let max_per_day = 1000i128;
+        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+
+        // Seed non-zero spend so a reset is detectable
+        let seeded_spend = 500i128;
+        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+
+        // ── One ledger before the 17,280-ledger boundary: spend preserved ────
+        let one_before = start_ledger + DAY_LEDGERS as u32 - 1;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = one_before;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+
+        let p_before = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(
+            p_before.daily_spent_stroops, seeded_spend,
+            "spend must NOT be cleared one ledger before the 17,280-ledger boundary"
+        );
+        assert_eq!(p_before.last_reset_ledger, start_ledger as u64);
+
+        // ── AT the 17,280-ledger boundary: reset fires ───────────────────────
+        let at_boundary = start_ledger + DAY_LEDGERS as u32;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = at_boundary;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+
+        let p_at = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(
+            p_at.daily_spent_stroops, 0,
+            "spend must be cleared at the 17,280-ledger boundary"
+        );
+        assert_eq!(
+            p_at.last_reset_ledger, at_boundary as u64,
+            "last_reset_ledger must advance to current ledger on reset"
+        );
+    }
+
+    /// set_day_ledgers is admin-only, rejects zero, and makes the day length a
+    /// runtime config value that the reset logic reads.
+    #[test]
+    fn test_set_day_ledgers_admin_only() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        // Non-admin cannot change the day length.
+        let impostor = Address::generate(&env);
+        assert!(client.try_set_day_ledgers(&DAY_LEDGERS, &impostor).is_err());
+
+        // Zero is rejected.
+        assert!(client.try_set_day_ledgers(&0u64, &admin).is_err());
+
+        // Admin can set the production value explicitly and it sticks.
+        client.set_day_ledgers(&DAY_LEDGERS, &admin);
+        assert_eq!(client.get_day_ledgers(), DAY_LEDGERS);
+
+        // The configured value is what the reset logic reads.
+        client.set_day_ledgers(&TEST_DAY_LEDGERS, &admin);
+        assert_eq!(client.get_day_ledgers(), TEST_DAY_LEDGERS);
     }
 }
