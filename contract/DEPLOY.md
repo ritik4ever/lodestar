@@ -184,6 +184,7 @@ The `register_service` function enforces the following field limits on-chain:
 | `description` | 10 | 256 | |
 | `endpoint` | — | 256 | |
 | `category` | 1 | 32 | |
+| `pay_to` | — | — | Soroban `Address` (Stellar `G…` / `C…`); see [Registry Migration Notes](../docs/registry-migration.md) |
 
 Submissions exceeding these limits are rejected with a typed assertion error.
 The same limits are enforced client-side in the RegisterForm and server-side

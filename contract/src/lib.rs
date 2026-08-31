@@ -22,7 +22,7 @@ pub struct ServiceEntry {
     pub description: String,
     pub endpoint: String,
     pub price_usdc: String,
-    pub pay_to: String,
+    pub pay_to: Address,
     pub category: String,
     pub provider: Address,
     pub reputation: i32,
@@ -103,7 +103,7 @@ impl LodestarRegistry {
         description: String,
         endpoint: String,
         price_usdc: String,
-        pay_to: String,
+        pay_to: Address,
         category: String,
     ) -> u64 {
         provider.require_auth();
@@ -455,7 +455,7 @@ mod test {
             description: String::from_str(env, "Test Description"),
             endpoint: String::from_str(env, "https://test.com"),
             price_usdc: String::from_str(env, "10"),
-            pay_to: String::from_str(env, "G_TEST_PAYMENT"),
+            pay_to: Address::generate(env),
             category: cat.clone(),
             provider: provider.clone(),
             reputation,
@@ -823,13 +823,14 @@ mod test {
 
     fn register_a_service(env: &Env, registry: &LodestarRegistryClient) -> u64 {
         let provider = Address::generate(env);
+        let pay_to = Address::generate(env);
         registry.register_service(
             &provider,
             &String::from_str(env, "Test Service"),
             &String::from_str(env, "Test Description"),
             &String::from_str(env, "https://test.com"),
             &String::from_str(env, "10"),
-            &String::from_str(env, "G_TEST_PAYMENT"),
+            &pay_to,
             &String::from_str(env, "compute"),
         )
     }
@@ -847,7 +848,7 @@ mod test {
         let description = String::from_str(&env, "Test Description");
         let endpoint = String::from_str(&env, "https://test.com");
         let price = String::from_str(&env, "10");
-        let pay_to = String::from_str(&env, "G_TEST_PAYMENT");
+        let pay_to = Address::generate(&env);
         let category = String::from_str(&env, "compute");
 
         env.mock_auths(&[MockAuth {
@@ -1072,7 +1073,7 @@ mod test {
                 &String::from_str(&env, "Valid description long enough"),
                 &String::from_str(&env, "https://example.com"),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, "compute"),
             )
             .is_err());
@@ -1093,7 +1094,7 @@ mod test {
                 &String::from_str(&env, "Valid description long enough"),
                 &String::from_str(&env, "https://example.com"),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, "compute"),
             )
             .is_err());
@@ -1113,7 +1114,7 @@ mod test {
                 &String::from_str(&env, "123456789"),
                 &String::from_str(&env, "https://example.com"),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, "compute"),
             )
             .is_err());
@@ -1134,7 +1135,7 @@ mod test {
                 &String::from_str(&env, &long_desc),
                 &String::from_str(&env, "https://example.com"),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, "compute"),
             )
             .is_err());
@@ -1155,7 +1156,7 @@ mod test {
                 &String::from_str(&env, "1234567890"),
                 &String::from_str(&env, "https://example.com"),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, "compute"),
             )
             .is_ok());
@@ -1178,7 +1179,7 @@ mod test {
                 &String::from_str(&env, &long_desc),
                 &String::from_str(&env, "https://example.com"),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, "compute"),
             )
             .is_ok());
@@ -1199,7 +1200,7 @@ mod test {
                 &String::from_str(&env, "Valid description long enough"),
                 &String::from_str(&env, &long_endpoint),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, "compute"),
             )
             .is_err());
@@ -1222,7 +1223,7 @@ mod test {
                 &String::from_str(&env, "Valid description long enough"),
                 &String::from_str(&env, &max_endpoint),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, "compute"),
             )
             .is_ok());
@@ -1242,7 +1243,7 @@ mod test {
                 &String::from_str(&env, "Valid description long enough"),
                 &String::from_str(&env, "https://example.com"),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, ""),
             )
             .is_err());
@@ -1263,7 +1264,7 @@ mod test {
                 &String::from_str(&env, "Valid description long enough"),
                 &String::from_str(&env, "https://example.com"),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, &long_category),
             )
             .is_err());
@@ -1284,10 +1285,32 @@ mod test {
                 &String::from_str(&env, "Valid description long enough"),
                 &String::from_str(&env, "https://example.com"),
                 &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
+                &Address::generate(&env),
                 &String::from_str(&env, &max_category),
             )
             .is_ok());
+    }
+
+    #[test]
+    fn test_register_service_stores_pay_to_as_address() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let pay_to = Address::generate(&env);
+
+        let id = registry
+            .register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &pay_to,
+                &String::from_str(&env, "compute"),
+            );
+
+        assert_eq!(registry.get_service(&id).pay_to, pay_to);
     }
 
     #[test]

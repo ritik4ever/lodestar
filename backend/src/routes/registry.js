@@ -370,8 +370,8 @@ router.post("/registry/prepare-register", writeRateLimiter(), async (req, res) =
     if (!normalizedPriceUsdc) {
       return res.status(400).json({ error: "`priceUsdc` must be at least 0.0001", code: "INVALID_BODY" });
     }
-    if (payTo !== undefined && (typeof payTo !== "string" || payTo.trim().length === 0)) {
-      return res.status(400).json({ error: "`payTo` must be a non-empty string when provided", code: "INVALID_BODY" });
+    if (payTo !== undefined && !isValidStellarAddress(payTo)) {
+      return res.status(400).json({ error: "`payTo` must be a valid Stellar address when provided", code: "INVALID_BODY" });
     }
 
     const prepared = await buildUnsignedRegistryTx("register", providerAddress, {
