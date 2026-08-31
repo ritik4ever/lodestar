@@ -104,14 +104,18 @@ Before starting work on an issue:
 
 ## Submitting a pull request
 
-1. Fork the repo and create a branch that follows the naming conventions above.
-2. Make your changes and ensure the relevant tests pass locally.
+1. Fork the repo and create a branch that follows the naming conventions above: `git checkout -b feat/your-feature`
+2. Make your changes and ensure all tests pass locally.
 3. Update documentation when behavior, configuration, or contributor workflows change.
-4. Open a PR against `main` with:
+4. Open a PR against `main` with a clear description of what changed and why:
    - a short summary of the change
    - why the change was needed
    - the tests you ran
    - any relevant docs or screenshots
+
+## Troubleshooting
+
+If you run into any issues during setup, check our [`docs/troubleshooting.md`](docs/troubleshooting.md) guide. It covers common failures such as missing WASM targets, Stellar CLI installation problems, Freighter configuration, RPC rate limits, and insufficient testnet balance.
 
 ## Review expectations
 
