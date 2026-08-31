@@ -36,7 +36,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         type: 'article',
         images: [
           {
-            url: '/opengraph-image',
+            url: `/services/${serviceId}/opengraph-image`,
             width: 1200,
             height: 630,
             alt: title,
@@ -47,7 +47,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         card: 'summary_large_image',
         title,
         description,
-        images: ['/opengraph-image'],
+        images: [`/services/${serviceId}/opengraph-image`],
       },
     };
   } catch {
@@ -61,7 +61,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         type: 'article',
         images: [
           {
-            url: '/opengraph-image',
+            url: `/services/${serviceId}/opengraph-image`,
             width: 1200,
             height: 630,
           },
@@ -71,7 +71,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         card: 'summary_large_image',
         title: `Service #${serviceId} | Lodestar`,
         description: 'View service details on Lodestar.',
-        images: ['/opengraph-image'],
+        images: [`/services/${serviceId}/opengraph-image`],
       },
     };
   }
