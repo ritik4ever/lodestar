@@ -28,6 +28,14 @@ async function loadConfig(overrides = {}) {
     'DEMO_RUN_POLL_MAX_WAIT_MS',
     'DEMO_RUN_POLL_INITIAL_DELAY_MS',
     'DEMO_RUN_POLL_MAX_DELAY_MS',
+    'RPC_TIMEOUT_SECONDS',
+    'REGISTRY_SUBMIT_TOKEN_TTL_MS',
+    'SEQ_NUM_SYNC_INTERVAL_MS',
+    'BAD_SEQ_MAX_RETRIES',
+    'TRANSACTION_POLL_MAX_ATTEMPTS',
+    'TRANSACTION_POLL_DELAY_MS',
+    'IDEMPOTENCY_TTL_MS',
+    'IDEMPOTENCY_PURGE_INTERVAL_MS',
   ]) {
     if (!(key in overrides)) delete process.env[key];
   }
@@ -115,6 +123,68 @@ describe('config demoRun polling env validation', () => {
   });
 });
 
+describe('config contractErrors + idempotency env validation', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it('uses safe defaults when contract-error tuning vars are unset', async () => {
+    const config = await loadConfig();
+    expect(config.contractErrors.rpcTimeoutSeconds).toBe(30);
+    expect(config.contractErrors.registrySubmitTokenTtlMs).toBe(600_000);
+    expect(config.contractErrors.seqNumSyncIntervalMs).toBe(5_000);
+    expect(config.contractErrors.badSeqMaxRetries).toBe(3);
+    expect(config.contractErrors.transactionPollMaxAttempts).toBe(20);
+    expect(config.contractErrors.transactionPollDelayMs).toBe(1_500);
+    expect(config.idempotency.ttlMs).toBe(86_400_000);
+    expect(config.idempotency.purgeIntervalMs).toBe(60_000);
+  });
+
+  it('honors valid positive-integer overrides', async () => {
+    const config = await loadConfig({
+      RPC_TIMEOUT_SECONDS: '45',
+      REGISTRY_SUBMIT_TOKEN_TTL_MS: '300000',
+      SEQ_NUM_SYNC_INTERVAL_MS: '10000',
+      BAD_SEQ_MAX_RETRIES: '5',
+      TRANSACTION_POLL_MAX_ATTEMPTS: '40',
+      TRANSACTION_POLL_DELAY_MS: '2000',
+      IDEMPOTENCY_TTL_MS: '3600000',
+      IDEMPOTENCY_PURGE_INTERVAL_MS: '30000',
+    });
+    expect(config.contractErrors.rpcTimeoutSeconds).toBe(45);
+    expect(config.contractErrors.registrySubmitTokenTtlMs).toBe(300_000);
+    expect(config.contractErrors.seqNumSyncIntervalMs).toBe(10_000);
+    expect(config.contractErrors.badSeqMaxRetries).toBe(5);
+    expect(config.contractErrors.transactionPollMaxAttempts).toBe(40);
+    expect(config.contractErrors.transactionPollDelayMs).toBe(2_000);
+    expect(config.idempotency.ttlMs).toBe(3_600_000);
+    expect(config.idempotency.purgeIntervalMs).toBe(30_000);
+  });
+
+  it('falls back and warns on non-numeric values', async () => {
+    const config = await loadConfig({ BAD_SEQ_MAX_RETRIES: 'abc', IDEMPOTENCY_TTL_MS: 'never' });
+    expect(config.contractErrors.badSeqMaxRetries).toBe(3);
+    expect(config.idempotency.ttlMs).toBe(86_400_000);
+    expect(console.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back on zero or negative values', async () => {
+    const config = await loadConfig({
+      RPC_TIMEOUT_SECONDS: '0',
+      TRANSACTION_POLL_MAX_ATTEMPTS: '-1',
+      IDEMPOTENCY_PURGE_INTERVAL_MS: '0',
+    });
+    expect(config.contractErrors.rpcTimeoutSeconds).toBe(30);
+    expect(config.contractErrors.transactionPollMaxAttempts).toBe(20);
+    expect(config.idempotency.purgeIntervalMs).toBe(60_000);
+  });
+});
+
 describe('config x402.payTo PAYMENT_ADDRESS validation', () => {
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
@@ -143,6 +213,14 @@ describe('config x402.payTo PAYMENT_ADDRESS validation', () => {
       'DEMO_RUN_POLL_MAX_WAIT_MS',
       'DEMO_RUN_POLL_INITIAL_DELAY_MS',
       'DEMO_RUN_POLL_MAX_DELAY_MS',
+      'RPC_TIMEOUT_SECONDS',
+      'REGISTRY_SUBMIT_TOKEN_TTL_MS',
+      'SEQ_NUM_SYNC_INTERVAL_MS',
+      'BAD_SEQ_MAX_RETRIES',
+      'TRANSACTION_POLL_MAX_ATTEMPTS',
+      'TRANSACTION_POLL_DELAY_MS',
+      'IDEMPOTENCY_TTL_MS',
+      'IDEMPOTENCY_PURGE_INTERVAL_MS',
     ]) {
       delete process.env[key];
     }
