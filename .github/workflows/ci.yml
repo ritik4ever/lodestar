@@ -12,6 +12,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   # ── Soroban contract: build + test ─────────────────────────────────────
@@ -116,9 +117,31 @@ jobs:
         working-directory: frontend
         run: npx tsc --noEmit
 
-      - name: Build
+      - name: Build + bundle budget
         working-directory: frontend
-        run: npm run build
+        run: npm run build:bundle
+
+      - name: Comment bundle sizes on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const reportPath = path.join(process.env.GITHUB_WORKSPACE, 'frontend', 'bundle-size-report.md');
+            if (!fs.existsSync(reportPath)) {
+              core.info('No bundle-size report generated.');
+              return;
+            }
+
+            const report = fs.readFileSync(reportPath, 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: report,
+            });
 
       - name: Run tests
         working-directory: frontend
