@@ -15,11 +15,70 @@ import {
   dumpPendingTransactions,
   resumePendingTransactions,
 } from "./lib/contract.js";
+import { getCircuitBreakerState } from "./lib/facilitatorCircuitBreaker.js";
 import requestIdMiddleware from "./lib/requestId.js";
 import registryRouter from "./routes/registry.js";
 import servicesRouter from "./routes/services.js";
 import demoRouter from "./routes/demo.js";
 import agentsRouter from "./routes/agents.js";
+
+/**
+ * Attempt a lightweight ping to the facilitator service.
+ * Returns facilitator status with latency measurement.
+ */
+async function checkFacilitatorHealth() {
+  const result = {
+    status: 'ok',
+    latency_ms: 0,
+    error: null,
+  };
+
+  try {
+    const startTime = Date.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s max for health check
+
+    const response = await fetch(`${config.x402.facilitatorUrl}/health`, {
+      method: 'HEAD',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    result.latency_ms = Date.now() - startTime;
+
+    if (!response.ok) {
+      result.status = 'degraded';
+      result.error = `HTTP ${response.status}`;
+    }
+
+    logger.debug(
+      { latency: result.latency_ms, status: response.status },
+      'Facilitator health check passed',
+    );
+  } catch (err) {
+    result.status = 'down';
+    result.latency_ms = 0;
+    result.error = err.message || 'Connection failed';
+
+    logger.warn(
+      { error: err.message },
+      'Facilitator health check failed',
+    );
+  }
+
+  // Also check circuit breaker state
+  const circuitState = getCircuitBreakerState();
+  if (circuitState.state === 'open') {
+    result.status = 'degraded';
+    result.circuit_breaker = 'open';
+    result.circuit_breaker_failures = circuitState.consecutiveFailures;
+  } else if (circuitState.state === 'half-open') {
+    result.status = 'degraded';
+    result.circuit_breaker = 'half-open';
+  }
+
+  return result;
+}
 
 if (process.argv.includes("--print-config")) {
   console.log(
@@ -67,6 +126,38 @@ app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(requestIdMiddleware);
 app.use(express.json({ limit: config.jsonBodyLimit }));
 
+x402-payment-in-services.js-calls-the-Stellar-facilitator-synchronously-in-the-HTTP-request-path-a-slow-or-unresponsive-facilitator-stalls-every-service-request-and-blocks-#246-FIX
+app.get("/healthz", async (req, res) => {
+  try {
+    const health = await checkRpcHealth();
+    const facilitatorStatus = await checkFacilitatorHealth();
+    const queueDepth = getSubmitQueueDepth();
+
+    // Determine HTTP status code based on health status
+    let statusCode = 200;
+    if (health.status === "unhealthy") {
+      statusCode = 503; // Service Unavailable
+    } else if (health.status === "degraded") {
+      statusCode = 200; // Still accept requests but indicate degradation
+    }
+
+    // Downgrade to 503 if facilitator is completely down and circuit is open
+    if (facilitatorStatus.status === 'down') {
+      statusCode = 503;
+    }
+
+    const pendingTxCount = getPendingTransactionCount();
+
+    res.status(statusCode).json({
+      status: health.status,
+      rpc: health.rpc,
+      contract: health.contract,
+      facilitator_status: facilitatorStatus,
+      timestamp: health.timestamp,
+      queueDepth,
+      pendingTransactions: pendingTxCount,
+      ...(health.error && { error: health.error }),
+    });
 // Liveness (#841): dependency-free by design. Answers only "is this process
 // running?" so an orchestrator never restarts a healthy instance because an
 // upstream is slow. Dependency state lives on /readyz.
@@ -87,6 +178,7 @@ app.get("/readyz", async (req, res) => {
   try {
     const result = await checkReadiness();
     res.status(result.ready ? 200 : 503).json(result);
+
   } catch (err) {
     logger.error({ err }, "GET /readyz failed");
     res.status(503).json({

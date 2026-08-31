@@ -77,6 +77,11 @@ const config = Object.freeze({
 
   x402: {
     facilitatorUrl: process.env.FACILITATOR_URL,
+    facilitatorTimeoutMs: parsePositiveInt(
+      process.env.FACILITATOR_TIMEOUT_MS,
+      10_000,
+      'FACILITATOR_TIMEOUT_MS'
+    ),
     searchPrice: process.env.SEARCH_PRICE ?? '0.001',
     weatherPrice: process.env.WEATHER_PRICE ?? '0.001',
     payTo: process.env.PAYMENT_ADDRESS || process.env.SERVER_STELLAR_ADDRESS,
