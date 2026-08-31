@@ -147,8 +147,8 @@ describe('activeServiceExists pagination', () => {
       contractLib.contractHelpers.activeServiceExists(provider, endpoint, fetchServices)
     ).resolves.toBe(true);
 
-    expect(fetchServices).toHaveBeenNthCalledWith(1, { page: 0, pageSize: 20 });
-    expect(fetchServices).toHaveBeenNthCalledWith(2, { page: 1, pageSize: 20 });
+    expect(fetchServices).toHaveBeenNthCalledWith(1, { offset: 0, limit: 20 });
+    expect(fetchServices).toHaveBeenNthCalledWith(2, { offset: 20, limit: 20 });
   });
 });
 
@@ -171,9 +171,9 @@ describe('listServicesByProvider pagination', () => {
       { id: 3, provider },
     ]);
 
-    expect(fetchServices).toHaveBeenNthCalledWith(1, { page: 0, pageSize: 20 });
-    expect(fetchServices).toHaveBeenNthCalledWith(2, { page: 1, pageSize: 20 });
-    expect(fetchServices).toHaveBeenNthCalledWith(3, { page: 2, pageSize: 20 });
+    expect(fetchServices).toHaveBeenNthCalledWith(1, { offset: 0, limit: 20 });
+    expect(fetchServices).toHaveBeenNthCalledWith(2, { offset: 20, limit: 20 });
+    expect(fetchServices).toHaveBeenNthCalledWith(3, { offset: 40, limit: 20 });
   });
 });
 

@@ -12,6 +12,7 @@ import type {
   AgentSpendCheckResponse,
   AgentSortOption,
 } from './types';
+import { PAGE_SIZE } from './pagination';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -130,7 +131,7 @@ export const AGENTS_CONTRACT_ID = process.env.NEXT_PUBLIC_AGENTS_CONTRACT_ID ?? 
 
 export async function fetchAgents(
   page = 0,
-  pageSize = 12,
+  pageSize = PAGE_SIZE,
   sort: AgentSortOption = 'score'
 ): Promise<AgentsResponse> {
   return apiFetch<AgentsResponse>(

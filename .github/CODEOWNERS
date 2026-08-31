@@ -1,0 +1,12 @@
+# Each line is a file pattern followed by one or more owners
+# Order matters: the last matching pattern takes precedence
+
+* @ritik4ever
+
+/agent/ @ritik4ever
+
+/backend/ @ritik4ever @naninu123
+
+/contract/ @ritik4ever @aadviksinghdebug
+
+/frontend/ @ritik4ever @naninu123

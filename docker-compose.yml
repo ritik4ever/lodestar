@@ -1,0 +1,39 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3001
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      CONTRACT_ID: ${CONTRACT_ID:-dummy_contract_id}
+      AGENTS_CONTRACT_ID: ${AGENTS_CONTRACT_ID:-dummy_agents_contract_id}
+      SERVER_STELLAR_ADDRESS: ${SERVER_STELLAR_ADDRESS:-GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA}
+      SERVER_STELLAR_SECRET: ${SERVER_STELLAR_SECRET:-SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA}
+      STELLAR_RPC_URL: ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      STELLAR_NETWORK_PASSPHRASE: ${STELLAR_NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      FACILITATOR_URL: ${FACILITATOR_URL:-http://localhost}
+      USDC_CONTRACT_ID: ${USDC_CONTRACT_ID:-dummy_usdc_contract}
+    ports:
+      - "127.0.0.1:3001:3001"
+    # Liveness (#841): is the process up? A dependency outage must not restart it.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      PORT: 3000
+    depends_on:
+      backend:
+        # Readiness (#841): wait until the backend can actually serve, not merely
+        # until its process has started.
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"

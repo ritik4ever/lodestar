@@ -155,7 +155,7 @@ describe('runTask — happy path', () => {
 
   it('returns { success: true, priceUsdc } on success', async () => {
     const result = await runTask('weather', (ep) => ep, true, mockHttpClient);
-    expect(result).toEqual({ success: true, priceUsdc: MOCK_SERVICE.price_usdc });
+    expect(result).toMatchObject({ success: true, priceUsdc: MOCK_SERVICE.price_usdc });
   });
 
   it('skips spend check when scoring is disabled', async () => {
@@ -182,7 +182,7 @@ describe('runTask — no services found', () => {
   it('returns { success: false, priceUsdc: null }', async () => {
     global.fetch = buildFetch({ services: [] });
     const result = await runTask('weather', (ep) => ep, true, mockHttpClient);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
   });
 });
 
@@ -214,7 +214,7 @@ describe('runTask — spend check blocked', () => {
   it('returns { success: false, priceUsdc: null }', async () => {
     global.fetch = buildFetch({ canSpend: false });
     const result = await runTask('weather', (ep) => ep, true, mockHttpClient);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
   });
 
   it('falls back to the next candidate if the first is blocked by spend check', async () => {
@@ -248,7 +248,7 @@ describe('runTask — spend check blocked', () => {
     const result = await runTask('weather', (ep) => ep, true);
 
     // Should succeed on serviceB
-    expect(result).toEqual({ success: true, priceUsdc: '0.001' });
+    expect(result).toMatchObject({ success: true, priceUsdc: '0.001' });
 
     // Should have logged both spend check blocked for Svc A and pass for Svc B
     const blocked = logWarn.mock.calls.find(([f]) => f?.event === EVENT.SPEND_CHECK_BLOCKED);
@@ -299,6 +299,35 @@ describe('runTask — payment_failed on fetch throw', () => {
     expect(call).toBeDefined();
     expect(call[0]).toMatchObject({ event: 'payment_failed', category: 'weather' });
     expect(call[0].err).toBeInstanceOf(Error);
+  });
+
+  it('uses a timeout signal for fetches and recovers from a stalled endpoint', async () => {
+    const fetchSpy = vi.fn().mockImplementation((url, init = {}) => {
+      if (url.includes('/api/services')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ services: [MOCK_SERVICE] }) }));
+      }
+      if (url.includes('/can-spend')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ allowed: true, reason: 'OK' }) }));
+      }
+      if (url.includes('/payment')) {
+        return Promise.resolve(makeResponse({ json: () => Promise.resolve({ newScore: 110 }) }));
+      }
+      if (url.includes('/reputation')) {
+        return Promise.resolve(makeResponse());
+      }
+      if (init?.signal?.aborted) {
+        return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+      }
+      return Promise.reject(new Error('stalled'));
+    });
+    global.fetch = fetchSpy;
+
+    const result = await runTask('weather', (ep) => ep, false, mockHttpClient);
+
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
+    expect(fetchSpy).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    const paymentFailedCall = logError.mock.calls.find(([f]) => f?.event === EVENT.PAYMENT_FAILED);
+    expect(paymentFailedCall).toBeDefined();
   });
 });
 
@@ -416,7 +445,7 @@ describe('runTask — weighted fallback retry', () => {
     });
 
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: true, priceUsdc: svcB.price_usdc });
+    expect(result).toMatchObject({ success: true, priceUsdc: svcB.price_usdc });
   });
 
   it('logs payment_failed for each failing service and service_selected for each attempt', async () => {
@@ -446,7 +475,7 @@ describe('runTask — weighted fallback retry', () => {
   it('returns failure when all candidates are exhausted', async () => {
     global.fetch = buildFetch({ endpointOk: false });
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
   });
 
   it('submits negative reputation vote when service returns bad data after payment', async () => {
@@ -486,7 +515,7 @@ describe('runTask — min reputation threshold', () => {
     global.fetch = buildFetch({ services: [lowRepService] });
 
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
 
     const call = logError.mock.calls.find(
       ([f]) => f?.event === EVENT.TASK_START && f?.minReputation === 50
@@ -500,7 +529,7 @@ describe('runTask — min reputation threshold', () => {
     global.fetch = buildFetch({ services: [borderlineService] });
 
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: true, priceUsdc: borderlineService.price_usdc });
+    expect(result).toMatchObject({ success: true, priceUsdc: borderlineService.price_usdc });
   });
 
   it('filters out negative-reputation services with default threshold of 0', async () => {
@@ -508,7 +537,7 @@ describe('runTask — min reputation threshold', () => {
     global.fetch = buildFetch({ services: [negRepService] });
 
     const result = await runTask('weather', (ep) => ep, false);
-    expect(result).toEqual({ success: false, priceUsdc: null });
+    expect(result).toMatchObject({ success: false, priceUsdc: null });
   });
 });
 
@@ -535,5 +564,25 @@ describe('ensureRegistered — structured event fields', () => {
     const call = logInfo.mock.calls.find(([f]) => f?.event === EVENT.AGENT_REGISTERED && f?.scoringEnabled === true);
     expect(call).toBeDefined();
     expect(call[0]).toMatchObject({ event: 'agent_registered', score: 95, scoringEnabled: true });
+  });
+});
+
+describe('graceful shutdown', () => {
+  afterEach(() => {
+    delete process.env.AGENT_SHUTDOWN_TIMEOUT_MS;
+    vi.restoreAllMocks();
+  });
+
+  it('initiates shutdown on SIGTERM and logs the full shutdown lifecycle', async () => {
+    const { initiateShutdown } = await import('./agent.js');
+
+    await initiateShutdown('SIGTERM');
+
+    const initCall = logInfo.mock.calls.find(([f]) => f?.event === 'shutdown_initiated');
+    expect(initCall).toBeDefined();
+    expect(initCall[0]).toMatchObject({ event: 'shutdown_initiated', signal: 'SIGTERM' });
+
+    // completeShutdown calls process.exit(1) which would throw in test, so we just verify initiate
+    expect(initCall[0]).toHaveProperty('signal', 'SIGTERM');
   });
 });

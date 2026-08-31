@@ -5,9 +5,13 @@ const mockServer = {
   getAccount: vi.fn(),
 };
 
+function MockRpcServer() {
+  return mockServer;
+}
+
 const mockSdk = {
   rpc: {
-    Server: vi.fn(() => mockServer),
+    Server: MockRpcServer,
     Api: {
       isSimulationError: vi.fn(),
     },
@@ -51,10 +55,12 @@ describe("checkRpcHealth", () => {
         stellar: { network: "testnet", rpcUrl: "https://soroban-testnet.stellar.org" },
         contract: { id: "mock" },
         server: { secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO7Q" },
+        rpcRetry: { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 100 },
       },
     }));
 
-    const { checkRpcHealth } = await import("../src/lib/stellar.js");
+    const { checkRpcHealth, __resetStellarServer } = await import("../src/lib/stellar.js");
+    __resetStellarServer();
 
     mockServer.getNetwork.mockResolvedValue({});
     mockServer.getAccount.mockResolvedValue({ id: "account123" });
@@ -73,10 +79,12 @@ describe("checkRpcHealth", () => {
         stellar: { network: "testnet", rpcUrl: "https://soroban-testnet.stellar.org" },
         contract: { id: "mock" },
         server: { secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO7Q" },
+        rpcRetry: { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 100 },
       },
     }));
 
-    const { checkRpcHealth } = await import("../src/lib/stellar.js");
+    const { checkRpcHealth, __resetStellarServer } = await import("../src/lib/stellar.js");
+    __resetStellarServer();
 
     mockServer.getNetwork.mockRejectedValue(new Error("Connection refused"));
 
@@ -93,10 +101,12 @@ describe("checkRpcHealth", () => {
         stellar: { network: "testnet", rpcUrl: "https://soroban-testnet.stellar.org" },
         contract: { id: "mock" },
         server: { secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO7Q" },
+        rpcRetry: { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 100 },
       },
     }));
 
-    const { checkRpcHealth } = await import("../src/lib/stellar.js");
+    const { checkRpcHealth, __resetStellarServer } = await import("../src/lib/stellar.js");
+    __resetStellarServer();
 
     mockServer.getNetwork.mockResolvedValue({});
     mockServer.getAccount.mockRejectedValue(new Error("Account not found"));
@@ -130,6 +140,7 @@ describe("checkRpcHealth", () => {
 
     const health = await checkRpcHealth();
 
+    expect(health.rpc.reachable).toBe(true);
     expect(health.rpc.latency).toBeGreaterThanOrEqual(0);
     expect(health.rpc.latency).toBeLessThan(1000);
   });
@@ -140,10 +151,12 @@ describe("checkRpcHealth", () => {
         stellar: { network: "testnet", rpcUrl: "https://soroban-testnet.stellar.org" },
         contract: { id: "mock" },
         server: { secret: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO7Q" },
+        rpcRetry: { maxRetries: 3, baseDelayMs: 10, maxDelayMs: 100 },
       },
     }));
 
-    const { checkRpcHealth } = await import("../src/lib/stellar.js");
+    const { checkRpcHealth, __resetStellarServer } = await import("../src/lib/stellar.js");
+    __resetStellarServer();
 
     mockServer.getNetwork.mockResolvedValue({});
     mockServer.getAccount.mockResolvedValue({ id: "account123" });

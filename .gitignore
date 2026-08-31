@@ -28,5 +28,9 @@ Thumbs.db
 # Soroban
 *.wasm
 frontend/next-env.d.ts
+
+# Data
 data/
-data/
+
+# Agent run summary artefact (#843) — path configurable via AGENT_RUN_SUMMARY_PATH
+agent-run-summary.json

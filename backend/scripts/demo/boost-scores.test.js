@@ -1,21 +1,22 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
-vi.mock('../src/lib/contract.js', () => ({
+vi.mock('../../src/lib/contract.js', () => ({
   listAgents: vi.fn(),
   recordPaymentOnChain: vi.fn(),
 }));
 
-vi.mock('../src/lib/logger.js', () => ({
+vi.mock('../../src/lib/logger.js', () => ({
   default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }));
 
-import { listAgents, recordPaymentOnChain } from '../src/lib/contract.js';
-import logger from '../src/lib/logger.js';
+import { listAgents, recordPaymentOnChain } from '../../src/lib/contract.js';
+import logger from '../../src/lib/logger.js';
 import { boost } from './boost-scores.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.AGENTS_CONTRACT_ID = 'CTEST';
+  process.env.STELLAR_NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
 });
 
 const makeAgent = (overrides) => ({

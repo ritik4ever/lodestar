@@ -33,3 +33,16 @@ export class ReturnValueParseError extends ContractError {
     if (cause) this.cause = cause;
   }
 }
+
+/**
+ * Thrown when an RPC call exhausts its retry budget against a throttled or
+ * failing endpoint. The original error is attached as `cause` for diagnostics.
+ */
+export class RpcThrottledError extends ContractError {
+  constructor(message, attempts, cause) {
+    super(message, 'RPC_THROTTLED');
+    this.name = 'RpcThrottledError';
+    this.attempts = attempts;
+    if (cause) this.cause = cause;
+  }
+}

@@ -17,6 +17,7 @@ import {
   submitSignedAgentTx,
   isAgentRegistered,
 } from '../lib/contract.js';
+import { usdcToStroops, stroopsToUsdcDisplay } from '../lib/stroops.js';
 import config from '../config.js';
 import { ownerAuth } from '../middleware/ownerAuth.js';
 import { adminAuth } from '../middleware/adminAuth.js';
@@ -36,6 +37,12 @@ import {
 import { getActivityFeed, parseActivityPagination } from '../lib/activityFeed.js';
 
 const router = Router();
+
+// Shared page-size constants — keep in sync with frontend/lib/pagination.ts.
+// CONTRACT_PAGE_SIZE_CAP must match the .min(20u32) clamp in contract/src/lib.rs
+// so the backend never promises a slice larger than the contract can return.
+const PAGE_SIZE = 12;
+const CONTRACT_PAGE_SIZE_CAP = 20;
 
 // In-memory cache: avoids fetching all agents from Soroban on every paginated request.
 // TTL matches the frontend's 30s auto-refresh interval.
@@ -84,9 +91,9 @@ function requireAgentsContract(_req, res, next) {
 router.get('/agents', requireAgentsContract, async (req, res) => {
   try {
     const parsedPage = Number.parseInt(String(req.query.page ?? '0'), 10);
-    const parsedPageSize = Number.parseInt(String(req.query.pageSize ?? '12'), 10);
+    const parsedPageSize = Number.parseInt(String(req.query.pageSize ?? String(PAGE_SIZE)), 10);
     const page = Number.isFinite(parsedPage) ? Math.max(0, parsedPage) : 0;
-    const pageSize = Number.isFinite(parsedPageSize) ? Math.min(100, Math.max(1, parsedPageSize)) : 12;
+    const pageSize = Number.isFinite(parsedPageSize) ? Math.min(CONTRACT_PAGE_SIZE_CAP, Math.max(1, parsedPageSize)) : PAGE_SIZE;
     const sort = ['score', 'payments', 'newest'].includes(req.query.sort)
       ? req.query.sort
       : 'score';
@@ -131,9 +138,7 @@ router.get('/agents/stats', requireAgentsContract, async (_req, res) => {
       (sum, a) => sum + BigInt(a.total_volume_stroops),
       0n
     );
-    const usdcWhole = totalVolumeStroops / 10_000_000n;
-    const usdcCents = totalVolumeStroops % 10_000_000n;
-    const totalVolume = `${usdcWhole}.${String(usdcCents).padStart(7, '0').slice(0, 2)}`;
+    const totalVolume = stroopsToUsdcDisplay(totalVolumeStroops);
 
     res.json({ totalAgents, avgScore, topAgent, totalVolume, totalVolumeStroops: totalVolumeStroops.toString() });
   } catch (err) {
@@ -211,7 +216,7 @@ router.get('/agents/:address/can-spend', requireAgentsContract, async (req, res)
     const { address } = req.params;
     const amountUsdc = req.query.amount ?? '0';
     const category = req.query.category ?? '';
-    const amountStroops = BigInt(Math.round(parseFloat(amountUsdc) * 10_000_000));
+    const amountStroops = usdcToStroops(amountUsdc);
 
     const [allowed, policy, agent] = await Promise.all([
       checkSpendingAllowed(address, amountStroops),
@@ -247,13 +252,13 @@ router.get('/agents/:address/can-spend', requireAgentsContract, async (req, res)
       if (amountStroops > maxTx) {
         return res.json({
           allowed: false,
-          reason: `Amount exceeds per-transaction limit of $${(Number(maxTx) / 10_000_000).toFixed(4)} USDC`,
+          reason: `Amount exceeds per-transaction limit of $${stroopsToUsdcDisplay(maxTx)} USDC`,
         });
       }
       if (dailySpent + amountStroops > maxDay) {
         return res.json({
           allowed: false,
-          reason: `Daily spending limit of $${(Number(maxDay) / 10_000_000).toFixed(4)} USDC reached`,
+          reason: `Daily spending limit of $${stroopsToUsdcDisplay(maxDay)} USDC reached`,
         });
       }
       return res.json({ allowed: false, reason: 'Spending policy violation' });
@@ -367,11 +372,18 @@ router.post(
       return res.status(400).json({ error: '`serviceId` is required', code: 'INVALID_BODY' });
     }
 
-    // ── 5. Reserve the key before touching the chain ──────────────────────────
+    // ── 5. Validate amount before reserving the idempotency key ──────────────
+    let amountStroops;
+    try {
+      amountStroops = usdcToStroops(amountUsdc);
+    } catch {
+      return res.status(400).json({ error: `Invalid amountUsdc: "${amountUsdc}"`, code: 'INVALID_BODY' });
+    }
+
+    // ── 6. Reserve the key before touching the chain ──────────────────────────
     markPending(scopedKey);
 
     try {
-      const amountStroops = BigInt(Math.round(parseFloat(String(amountUsdc)) * 10_000_000));
       await recordPaymentOnChain(address, serviceId, amountStroops, success);
       const agent = await getAgent(address);
       const newScore = agent?.score ?? 0;

@@ -1,0 +1,34 @@
+{
+  "_note": "This file is the shared source of truth for live Lodestar contract addresses. Values below are placeholders — update each field after every deploy so contributors can verify WASM hashes against on-chain state and point at the same deployments.",
+  "network": "testnet",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "explorer": "https://stellar.expert/explorer/testnet",
+  "contracts": [
+    {
+      "name": "LodestarServiceRegistry",
+      "description": "Service registry — discovery, registration, reputation voting, and category filtering.",
+      "contractId": "CAKZALA72JTR6BV6N44E7L52C7QU5BAYYKVKYR2DFSV2YD2A2OI6WJMP",
+      "wasmHash": "<run `sha256sum target/wasm32-unknown-unknown/release/lodestar_registry.wasm` after build>",
+      "deployer": "<your deployer Stellar public key (G...)>",
+      "deploymentLedger": "<ledger number printed by `stellar contract deploy`>",
+      "deployedAt": "<ISO timestamp: date -u +\"%Y-%m-%dT%H:%M:%SZ\">",
+      "wasmPath": "target/wasm32-unknown-unknown/release/lodestar_registry.wasm"
+    },
+    {
+      "name": "LodestarAgents",
+      "description": "Agent credit scoring — identity, credit scores, spending policies, and administrative controls.",
+      "contractId": "CCT4FUTW54K7BYZFOCBEM5MVLS42ZE25WJ3ONW7RLYXAF3HQS7ZQYA2N",
+      "wasmHash": "<run `sha256sum agents/target/wasm32v1-none/release/lodestar_agents.wasm` after build>",
+      "deployer": "<your deployer Stellar public key (G...)>",
+      "deploymentLedger": "<ledger number printed by `stellar contract deploy`>",
+      "deployedAt": "<ISO timestamp: date -u +\"%Y-%m-%dT%H:%M:%SZ\">",
+      "wasmPath": "agents/target/wasm32v1-none/release/lodestar_agents.wasm"
+    }
+  ],
+  "verification": {
+    "obtainWasmHash": "Run `sha256sum <wasmPath>` from the `contract/` directory after `stellar contract build`. The hash is also printed by `stellar contract install --wasm <wasmPath>`.",
+    "obtainDeploymentLedger": "The ledger number is printed by `stellar contract deploy`. You can also look up the contract on the Stellar Explorer.",
+    "verifyDeployment": "Compare the on-chain WASM hash (visible on the Stellar Explorer contract page) against the `wasmHash` field in this file. They must match byte-for-byte."
+  }
+}

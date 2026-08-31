@@ -6,14 +6,15 @@ const config: Config = {
     './components/**/*.{ts,tsx}',
     './lib/**/*.{ts,tsx}',
   ],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        background: '#FAFAF7',
-        primary: '#1A1A1A',
-        accent: '#E85D3A',
-        secondary: '#6B6B6B',
-        border: '#E5E5E5',
+        background: 'var(--background)',
+        primary: 'var(--primary)',
+        accent: 'var(--accent)',
+        secondary: 'var(--secondary)',
+        border: 'var(--border)',
         success: '#22C55E',
         error: '#EF4444',
       },

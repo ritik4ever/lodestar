@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="750" viewBox="0 0 1200 750" role="img" aria-label="Registry page preview showing discoverable services with reputation and pricing">
+  <rect width="1200" height="750" fill="#0f172a"/>
+  <rect x="40" y="40" width="1120" height="670" rx="28" fill="#111827" stroke="#334155" stroke-width="2"/>
+  <rect x="70" y="90" width="260" height="36" rx="10" fill="#1f2937"/>
+  <rect x="360" y="90" width="190" height="36" rx="10" fill="#1f2937"/>
+  <rect x="580" y="90" width="160" height="36" rx="10" fill="#1f2937"/>
+  <rect x="770" y="90" width="160" height="36" rx="10" fill="#1f2937"/>
+  <rect x="70" y="160" width="1060" height="120" rx="18" fill="#111827" stroke="#334155"/>
+  <rect x="110" y="190" width="180" height="20" rx="10" fill="#e2e8f0"/>
+  <rect x="320" y="190" width="100" height="20" rx="10" fill="#60a5fa"/>
+  <rect x="450" y="190" width="120" height="20" rx="10" fill="#fbbf24"/>
+  <rect x="600" y="190" width="90" height="20" rx="10" fill="#34d399"/>
+  <rect x="740" y="190" width="140" height="20" rx="10" fill="#a78bfa"/>
+  <rect x="70" y="310" width="1060" height="120" rx="18" fill="#111827" stroke="#334155"/>
+  <rect x="110" y="340" width="200" height="20" rx="10" fill="#e2e8f0"/>
+  <rect x="340" y="340" width="90" height="20" rx="10" fill="#60a5fa"/>
+  <rect x="460" y="340" width="110" height="20" rx="10" fill="#fbbf24"/>
+  <rect x="600" y="340" width="100" height="20" rx="10" fill="#34d399"/>
+  <rect x="740" y="340" width="120" height="20" rx="10" fill="#a78bfa"/>
+  <rect x="70" y="460" width="1060" height="120" rx="18" fill="#111827" stroke="#334155"/>
+  <rect x="110" y="490" width="220" height="20" rx="10" fill="#e2e8f0"/>
+  <rect x="360" y="490" width="80" height="20" rx="10" fill="#60a5fa"/>
+  <rect x="470" y="490" width="110" height="20" rx="10" fill="#fbbf24"/>
+  <rect x="610" y="490" width="90" height="20" rx="10" fill="#34d399"/>
+  <rect x="730" y="490" width="140" height="20" rx="10" fill="#a78bfa"/>
+  <text x="70" y="630" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="28">Registry view for discoverable services</text>
+</svg>

@@ -206,6 +206,46 @@ describe('payment header validation — weather', () => {
   });
 });
 
+describe('GET /demo/search query validation', () => {
+  it('returns 400 INVALID_QUERY when q is missing', async () => {
+    const res = await request(app).get('/demo/search');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('MISSING_QUERY');
+  });
+
+  it('returns 400 INVALID_QUERY when q is longer than 256 characters', async () => {
+    const longQuery = 'a'.repeat(257);
+    const res = await request(app).get(`/demo/search?q=${longQuery}`);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_QUERY');
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ rawQuery: longQuery }),
+      expect.stringContaining('Invalid search query supplied to GET /demo/search')
+    );
+  });
+
+  it('trims and sanitizes q before forwarding to search service', async () => {
+    const queryWithWhitespace = '   hello   world  \n\t ';
+    const normalizedQuery = 'hello world';
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ organic: [{ title: 'r', link: 'u', snippet: 's' }] }),
+    });
+
+    const res = await request(app).get(`/demo/search?q=${encodeURIComponent(queryWithWhitespace)}`);
+    expect(res.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://google.serper.dev/search',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json', 'X-API-KEY': 'mock_key' }),
+        body: JSON.stringify({ q: normalizedQuery, num: 5 }),
+      })
+    );
+    expect(res.body.query).toBe(normalizedQuery);
+  });
+});
+
 describe('payment header validation — search', () => {
   const mockSearchFetch = () =>
     vi.fn().mockResolvedValue({

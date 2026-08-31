@@ -3,15 +3,20 @@ name = "lodestar-registry"
 version = "0.1.0"
 edition = "2021"
 publish = false
+license = "Apache-2.0"
+
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { version = "22.0.0", features = ["alloc"] }
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils", "alloc"] }
+# The real agents contract, so integration tests exercise the actual
+# cross-contract call rather than a mock (#835).
+lodestar-agents = { path = "agents", features = ["testutils"] }
 
 [profile.release]
 opt-level = "z"

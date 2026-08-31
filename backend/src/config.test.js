@@ -231,6 +231,81 @@ describe('config AGENTS_CONTRACT_ID startup warning', () => {
   });
 });
 
+describe('config CORS_ORIGIN validation', () => {
+  let exitSpy;
+
+  beforeEach(() => {
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+    exitSpy.mockRestore();
+  });
+
+  it('falls back to localhost outside production when CORS_ORIGIN is unset', async () => {
+    const config = await loadConfig({ NODE_ENV: 'development' });
+    expect(config.corsOrigin).toEqual(['http://localhost:3000']);
+  });
+
+  it('fails startup when NODE_ENV=production and CORS_ORIGIN is unset', async () => {
+    const log = { fatal: vi.fn(), warn: vi.fn() };
+    await loadConfig({ NODE_ENV: 'production' });
+    const { validateConfig } = await import('./config.js');
+    validateConfig(log);
+    expect(log.fatal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining('CORS_ORIGIN must be set explicitly')]),
+      }),
+      expect.any(String),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('does not fail startup when NODE_ENV=production and CORS_ORIGIN is set', async () => {
+    const log = { fatal: vi.fn(), warn: vi.fn() };
+    await loadConfig({ NODE_ENV: 'production', CORS_ORIGIN: 'https://app.example.com', AGENTS_CONTRACT_ID: 'C_AGENTS' });
+    const { validateConfig } = await import('./config.js');
+    validateConfig(log);
+    expect(log.fatal).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects CORS_ORIGIN="*" even outside production', async () => {
+    const log = { fatal: vi.fn(), warn: vi.fn() };
+    await loadConfig({ NODE_ENV: 'development', CORS_ORIGIN: '*' });
+    const { validateConfig } = await import('./config.js');
+    validateConfig(log);
+    expect(log.fatal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errors: expect.arrayContaining([expect.stringContaining("cannot include '*'")]),
+      }),
+      expect.any(String),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('rejects "*" mixed in with other explicit origins', async () => {
+    const log = { fatal: vi.fn(), warn: vi.fn() };
+    await loadConfig({ NODE_ENV: 'production', CORS_ORIGIN: 'https://app.example.com,*' });
+    const { validateConfig } = await import('./config.js');
+    validateConfig(log);
+    expect(log.fatal).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('parses a comma-separated CORS_ORIGIN into a trimmed array', async () => {
+    const config = await loadConfig({
+      CORS_ORIGIN: 'https://app.example.com, https://admin.example.com',
+    });
+    expect(config.corsOrigin).toEqual([
+      'https://app.example.com',
+      'https://admin.example.com',
+    ]);
+  });
+});
+
 describe('validateConfig', () => {
   let exitSpy;
 

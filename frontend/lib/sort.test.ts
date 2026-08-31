@@ -17,9 +17,25 @@ function makeService(overrides: Partial<ServiceEntry> = {}): ServiceEntry {
   };
 }
 
-
-
-describe('sortServices', () => {
+function makeAgent(overrides: Partial<AgentEntry> = {}): AgentEntry {
+  return {
+    address: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWFL',
+    name: 'Test Agent',
+    description: 'A test agent',
+    owner: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWFL',
+    score: 100,
+    total_payments: '0',
+    successful_payments: '0',
+    failed_payments: '0',
+    total_volume_stroops: '0',
+    registered_at: '100',
+    last_active: '100',
+    active: true,
+    flagged: false,
+    flag_reason: '',
+    ...overrides,
+  };
+}describe('sortServices', () => {
   it('sorts by newest (registered_at descending)', () => {
     const services = [
       makeService({ id: 1, registered_at: 100 }),

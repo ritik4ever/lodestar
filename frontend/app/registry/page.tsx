@@ -9,6 +9,7 @@ import { fetchServices } from '@/lib/contract';
 import { filterServices } from '@/lib/registry';
 import { sortServices } from '@/lib/sort';
 import type { Category, SortOption } from '@/lib/types';
+import { useDebounce } from '@/hooks/useDebounce';
 
 const SORTS: { label: string; value: SortOption }[] = [
   { label: 'Newest', value: 'newest' },
@@ -22,6 +23,7 @@ export default function RegistryPage() {
   const [activeCategory, setActive] = useState<Category | 'all'>('all');
   const [sort, setSort]             = useState<SortOption>('newest');
   const [query, setQuery]           = useState('');
+  const debouncedQuery              = useDebounce(query);
   const [page, setPage]             = useState(1);
 
   // SWR replaces the manual setInterval poll: it dedupes concurrent requests,
@@ -38,13 +40,13 @@ export default function RegistryPage() {
       : 'Failed to load'
     : null;
 
-  // Reset to page 1 whenever the filtered set changes
+  // Reset to page 1 whenever the debounced query, sort, or category changes.
   useEffect(() => {
     setPage(1);
-  }, [query, sort, activeCategory]);
+  }, [debouncedQuery, sort, activeCategory]);
 
   const sorted   = sortServices(services, sort);
-  const filtered = filterServices(sorted, query);
+  const filtered = filterServices(sorted, debouncedQuery);
 
   const totalPages  = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage    = Math.min(page, totalPages);
@@ -143,8 +145,8 @@ export default function RegistryPage() {
         <div className="text-center py-24 text-secondary">
           <p className="text-base font-medium">No services found</p>
           <p className="text-sm mt-2">
-            {query.trim()
-              ? `No services match "${query.trim()}". Try a different name or description keyword.`
+            {debouncedQuery.trim()
+              ? `No services match "${debouncedQuery.trim()}". Try a different name or description keyword.`
               : activeCategory !== 'all'
                 ? `No active services in the "${activeCategory}" category.`
                 : 'The registry is empty. Be the first to register a service.'}

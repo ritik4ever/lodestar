@@ -1,0 +1,77 @@
+# docker-compose.yml — Lodestar agent scheduled-run example
+#
+# Runs the agent once per hour via a cron-style scheduler container
+# (mcuadros/ofelia) that exec's "docker exec" into the agent container.
+#
+# Usage:
+#   1. Copy agent/.env.example to agent/.env and fill in the values.
+#   2. docker compose up -d
+#
+# The agent container stays running between runs (sleeping via entrypoint
+# override) so Docker does not have to pull/unpack the image every hour.
+# Ofelia wakes it up by running "node agent.js" inside the live container.
+#
+# To run once immediately without waiting for the schedule:
+#   docker compose run --rm agent-run
+
+services:
+
+  # ── Agent service ────────────────────────────────────────────────────────────
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lodestar-agent
+    # Override CMD so the container stays up between scheduled runs.
+    # Ofelia will exec "node agent.js" on the cron schedule below.
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+    env_file:
+      - .env                  # copy .env.example → .env and fill in secrets
+    environment:
+      # Defaults that can be overridden in .env
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+      STELLAR_RPC_URL: ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      STELLAR_NETWORK_PASSPHRASE: ${STELLAR_NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: unless-stopped
+    # Ofelia reads scheduling labels from the container it manages.
+    labels:
+      ofelia.enabled: "true"
+      # Run "node agent.js" inside this container every hour.
+      # Adjust the cron expression to change the cadence:
+      #   every 10 minutes → "0 */10 * * * *"
+      #   every 6 hours    → "0 0 */6 * * *"
+      #   once a day       → "0 0 0 * * *"
+      ofelia.job-exec.run-agent.schedule: "0 0 * * * *"
+      ofelia.job-exec.run-agent.command: "node agent.js"
+
+  # ── Scheduler (ofelia) ───────────────────────────────────────────────────────
+  # Ofelia is a lightweight Docker-native cron scheduler.
+  # It discovers jobs from container labels so no crontab file is needed.
+  scheduler:
+    image: mcuadros/ofelia:latest
+    container_name: lodestar-scheduler
+    depends_on:
+      - agent
+    command: daemon --docker
+    volumes:
+      # Ofelia needs access to the Docker socket to exec into containers.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  # ── One-shot run (convenience) ───────────────────────────────────────────────
+  # docker compose run --rm agent-run
+  # Builds the same image and runs agent.js once, then exits.
+  agent-run:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+      STELLAR_RPC_URL: ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      STELLAR_NETWORK_PASSPHRASE: ${STELLAR_NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    profiles:
+      - oneshot               # only started with: docker compose --profile oneshot run agent-run

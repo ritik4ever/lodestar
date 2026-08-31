@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Lodestar — on-chain service discovery for x402 AI agents",
   "private": true,
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

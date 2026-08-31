@@ -12,6 +12,14 @@
   --border: #E5E5E5;
 }
 
+.dark {
+  --background: #0A0A0A;
+  --primary: #FAFAF7;
+  --accent: #FF7A50;
+  --secondary: #A0A0A0;
+  --border: #2A2A2A;
+}
+
 * {
   box-sizing: border-box;
 }

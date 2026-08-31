@@ -592,13 +592,7 @@ impl LodestarAgents {
 
         let now = env.ledger().sequence() as u64;
         let (daily_spent, last_reset) = existing
-            .map(|p| {
-                if now >= p.last_reset_ledger + DAY_LEDGERS {
-                    (0i128, now)
-                } else {
-                    (p.daily_spent_stroops, p.last_reset_ledger)
-                }
-            })
+            .map(|p| Self::get_daily_spend_with_reset(&env, &p))
             .unwrap_or((0i128, now));
 
         let policy = SpendingPolicy {
@@ -892,6 +886,44 @@ mod test {
         assert_eq!(config.flag_penalty, FLAG_PENALTY);
     }
 
+    /// Seed a non-zero `daily_spent_stroops` directly into contract storage.
+    ///
+    /// soroban-sdk 22 requires all `env.storage()` writes to happen inside a
+    /// contract context.  We use `env.as_contract(contract_id, || { ... })` so
+    /// the write is attributed to the agents contract and passes the SDK's
+    /// context guard.
+    fn seed_daily_spent(
+        env: &Env,
+        contract_id: &Address,
+        agent_addr: &Address,
+        _owner: &Address,
+        spent: i128,
+        _max_per_day: i128,
+    ) {
+        let key = DataKey::Policy(agent_addr.clone());
+        env.as_contract(contract_id, || {
+            let existing: SpendingPolicy = env
+                .storage()
+                .persistent()
+                .get(&key)
+                .expect("policy must exist before seeding spend");
+            let seeded = SpendingPolicy {
+                daily_spent_stroops: spent,
+                ..existing
+            };
+            env.storage().persistent().set(&key, &seeded);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TEST_MAX_TTL, TEST_MAX_TTL);
+        });
+    }
+
+    /// Exact-threshold: at ledger == last_reset + DAY_LEDGERS the counter clears.
+    ///
+    /// Sequence:
+    ///   ledger 100  — set policy, seed 500 stroops of daily spend
+    ///   ledger 100 + DAY_LEDGERS - 1  — one ledger BEFORE threshold: spend preserved
+    ///   ledger 100 + DAY_LEDGERS      — AT threshold: spend cleared, last_reset updated
     #[test]
     fn test_daily_reset_boundary_exact_threshold() {
         let env = Env::default();
@@ -903,52 +935,61 @@ mod test {
         let owner = Address::generate(&env);
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
-        // Set initial ledger to a known value
+        let start_ledger: u32 = 100;
         env.ledger().with_mut(|li| {
-            li.sequence_number = 100;
+            li.sequence_number = start_ledger;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
 
-        // Set up policy with custom limits
         let max_per_day = 1000i128;
-        client.update_policy(
-            &agent_addr,
-            &1000i128,
-            &max_per_day,
-            &vec![&env],
-            &0,
-            &owner,
+        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+
+        // Seed non-zero daily spend so a reset is detectable
+        let seeded_spend = 500i128;
+        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+
+        // Confirm seed is in storage
+        let p = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(p.daily_spent_stroops, seeded_spend, "seed should be in storage");
+        assert_eq!(p.last_reset_ledger, start_ledger as u64);
+
+        // ── One ledger BEFORE threshold — spend must be preserved ──────────
+        let before_threshold = start_ledger + DAY_LEDGERS as u32 - 1;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = before_threshold;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+
+        let p_before = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(
+            p_before.daily_spent_stroops, seeded_spend,
+            "spend must NOT be cleared one ledger before threshold"
         );
+        assert_eq!(p_before.last_reset_ledger, start_ledger as u64);
 
-        // Verify initial state
-        let policy = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy.daily_spent_stroops, 0);
-        assert_eq!(policy.last_reset_ledger, 100);
-
-        // Advance to DAY_LEDGERS - 1 (should NOT reset)
+        // ── AT threshold — spend must be cleared, last_reset updated ───────
+        let at_threshold = start_ledger + DAY_LEDGERS as u32;
         env.ledger().with_mut(|li| {
-            li.sequence_number = (DAY_LEDGERS - 1) as u32;
+            li.sequence_number = at_threshold;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        
-        let policy_before_reset = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy_before_reset.daily_spent_stroops, 0);
-        assert_eq!(policy_before_reset.last_reset_ledger, 100);
-        
-        // Advance one more to reach DAY_LEDGERS (should reset)
-        env.ledger().with_mut(|li| {
-            li.sequence_number += 1;
-            li.min_persistent_entry_ttl = TEST_MAX_TTL;
-            li.min_temp_entry_ttl = TEST_MAX_TTL;
-        });
-        
-        let policy_after_reset = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy_after_reset.daily_spent_stroops, 0);
-        assert_eq!(policy_after_reset.last_reset_ledger, 100);
+
+        let p_at = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(
+            p_at.daily_spent_stroops, 0,
+            "spend must be cleared at threshold"
+        );
+        assert_eq!(
+            p_at.last_reset_ledger, at_threshold as u64,
+            "last_reset_ledger must advance to current ledger on reset"
+        );
     }
 
+    /// One-before-and-after: explicitly verifies the off-by-one boundary with
+    /// non-zero accumulated spend, using start_ledger = 100.
     #[test]
     fn test_daily_reset_boundary_one_before_and_after() {
         let env = Env::default();
@@ -960,46 +1001,56 @@ mod test {
         let owner = Address::generate(&env);
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
+        let start_ledger: u32 = 100;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = start_ledger;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+
         let max_per_day = 1000i128;
-        
+        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+
+        // Seed non-zero daily spend
+        let seeded_spend = 300i128;
+        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+
+        // ── One before threshold: no reset ──────────────────────────────────
+        let one_before = start_ledger + DAY_LEDGERS as u32 - 1;
         env.ledger().with_mut(|li| {
-            li.sequence_number = 100;
+            li.sequence_number = one_before;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
 
-        client.update_policy(
-            &agent_addr,
-            &1000i128,
-            &max_per_day,
-            &vec![&env],
-            &0,
-            &owner,
+        let p_before = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(
+            p_before.daily_spent_stroops, seeded_spend,
+            "spend must NOT be cleared one ledger before threshold"
         );
+        assert_eq!(p_before.last_reset_ledger, start_ledger as u64);
 
-        // Advance to DAY_LEDGERS - 1 (should NOT reset)
+        // ── At threshold: reset fires ───────────────────────────────────────
+        let at_threshold = start_ledger + DAY_LEDGERS as u32;
         env.ledger().with_mut(|li| {
-            li.sequence_number = (DAY_LEDGERS - 1) as u32;
+            li.sequence_number = at_threshold;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        
-        let policy_before_reset = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy_before_reset.daily_spent_stroops, 0);
-        assert_eq!(policy_before_reset.last_reset_ledger, 100);
-        
-        // Advance to DAY_LEDGERS (should reset)
-        env.ledger().with_mut(|li| {
-            li.sequence_number += 1;
-            li.min_persistent_entry_ttl = TEST_MAX_TTL;
-            li.min_temp_entry_ttl = TEST_MAX_TTL;
-        });
-        
-        let policy_after_reset = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy_after_reset.daily_spent_stroops, 0);
-        assert_eq!(policy_after_reset.last_reset_ledger, 100);
+
+        let p_after = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(
+            p_after.daily_spent_stroops, 0,
+            "spend must be zero after reset"
+        );
+        assert_eq!(
+            p_after.last_reset_ledger, at_threshold as u64,
+            "last_reset_ledger must advance to current ledger on reset"
+        );
     }
 
+    /// update_policy preserves daily_spent within the window and resets it when
+    /// called after the window has elapsed.
     #[test]
     fn test_update_policy_handles_reset_correctly() {
         let env = Env::default();
@@ -1011,51 +1062,61 @@ mod test {
         let owner = Address::generate(&env);
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
-        // Set initial ledger
+        let start_ledger: u32 = 1000;
         env.ledger().with_mut(|li| {
-            li.sequence_number = 1000;
+            li.sequence_number = start_ledger;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
 
-        // Set a policy
         let max_per_day = 1000i128;
-        client.update_policy(
-            &agent_addr,
-            &1000i128,
-            &max_per_day,
-            &vec![&env],
-            &0,
-            &owner,
-        );
-        
-        // Verify initial state
-        let policy = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy.daily_spent_stroops, 0);
-        assert_eq!(policy.last_reset_ledger, 1000);
-        
-        // Advance to DAY_LEDGERS + 1 (should reset)
+        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+
+        // Seed non-zero spend
+        let seeded_spend = 400i128;
+        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+
+        let p = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(p.daily_spent_stroops, seeded_spend);
+        assert_eq!(p.last_reset_ledger, start_ledger as u64);
+
+        // ── Calling update_policy within the window keeps daily_spent ───────
+        let mid_window = start_ledger + DAY_LEDGERS as u32 - 1;
         env.ledger().with_mut(|li| {
-            li.sequence_number = (DAY_LEDGERS + 1) as u32;
+            li.sequence_number = mid_window;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        
-        // Now update_policy should reset daily_spent_stroops
-        client.update_policy(
-            &agent_addr,
-            &1000i128,
-            &max_per_day,
-            &vec![&env],
-            &0,
-            &owner,
+        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        let p_mid = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(
+            p_mid.daily_spent_stroops, seeded_spend,
+            "update_policy within window must not clear daily_spent"
         );
-        
-        let policy_after_update = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy_after_update.daily_spent_stroops, 0);
-        assert_eq!(policy_after_update.last_reset_ledger, 1000);
+        assert_eq!(p_mid.last_reset_ledger, start_ledger as u64);
+
+        // ── Calling update_policy at/after threshold resets spend ───────────
+        let after_threshold = start_ledger + DAY_LEDGERS as u32;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = after_threshold;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+
+        let p_after = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(
+            p_after.daily_spent_stroops, 0,
+            "update_policy at/after threshold must clear daily_spent"
+        );
+        assert_eq!(
+            p_after.last_reset_ledger, after_threshold as u64,
+            "last_reset_ledger must advance to current ledger after reset"
+        );
     }
 
+    /// Consecutive days: each time the window elapses the counter resets to 0
+    /// and last_reset_ledger advances to the current ledger.
     #[test]
     fn test_consecutive_days_reset_logic() {
         let env = Env::default();
@@ -1065,52 +1126,129 @@ mod test {
 
         let agent_addr = Address::generate(&env);
         let owner = Address::generate(&env);
+
+        let start_ledger: u32 = 1;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = start_ledger;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
+        let max_per_day = 1000i128;
+        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+
+        // Confirm initial last_reset_ledger = start_ledger (register_agent and
+        // update_policy both run at start_ledger = 1)
+        let p0 = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(p0.last_reset_ledger, start_ledger as u64);
+
+        // Seed spend for day 1
+        let spend_day1 = 200i128;
+        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, spend_day1, max_per_day);
+
+        // ── Day 2: first DAY_LEDGERS boundary ───────────────────────────────
+        let day2_ledger = start_ledger + DAY_LEDGERS as u32;
         env.ledger().with_mut(|li| {
-            li.sequence_number = 1;
+            li.sequence_number = day2_ledger;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+
+        let p_day2 = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(p_day2.daily_spent_stroops, 0, "day 2: spend must reset");
+        assert_eq!(
+            p_day2.last_reset_ledger, day2_ledger as u64,
+            "day 2: last_reset_ledger must advance"
+        );
+
+        // Note: get_policy only returns a view; the reset is not persisted until
+        // the next write (update_policy / record_payment).  Seed spend via
+        // direct storage write against the *new* last_reset value so day-3
+        // reset is based on the correct anchor.
+        let key = DataKey::Policy(agent_addr.clone());
+        env.as_contract(&contract_id, || {
+            let current: SpendingPolicy = env.storage().persistent().get(&key).unwrap();
+            env.storage().persistent().set(&key, &SpendingPolicy {
+                daily_spent_stroops: 150i128,
+                last_reset_ledger: day2_ledger as u64,
+                ..current
+            });
+            env.storage().persistent().extend_ttl(&key, TEST_MAX_TTL, TEST_MAX_TTL);
+        });
+
+        // ── Day 3: second DAY_LEDGERS boundary ──────────────────────────────
+        let day3_ledger = day2_ledger + DAY_LEDGERS as u32;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = day3_ledger;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+
+        let p_day3 = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(p_day3.daily_spent_stroops, 0, "day 3: spend must reset");
+        assert_eq!(
+            p_day3.last_reset_ledger, day3_ledger as u64,
+            "day 3: last_reset_ledger must advance"
+        );
+    }
+
+    /// One-ledger-before-threshold: verifies the guard condition is strict (>=),
+    /// so ledger == last_reset + DAY_LEDGERS - 1 does NOT trigger a reset.
+    #[test]
+    fn test_no_reset_one_ledger_before_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        let start_ledger: u32 = 50;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = start_ledger;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
 
         let max_per_day = 1000i128;
-        client.update_policy(
-            &agent_addr,
-            &1000i128,
-            &max_per_day,
-            &vec![&env],
-            &0,
-            &owner,
+        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+
+        // Seed non-zero spend
+        let seeded_spend = 750i128;
+        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+
+        // Advance to exactly one ledger before the threshold — must NOT reset
+        let one_before = start_ledger + DAY_LEDGERS as u32 - 1;
+        env.ledger().with_mut(|li| {
+            li.sequence_number = one_before;
+            li.min_persistent_entry_ttl = TEST_MAX_TTL;
+            li.min_temp_entry_ttl = TEST_MAX_TTL;
+        });
+
+        let p = client.get_policy(&agent_addr).unwrap();
+        assert_eq!(
+            p.daily_spent_stroops, seeded_spend,
+            "daily_spent must NOT be cleared one ledger before the threshold"
+        );
+        assert_eq!(
+            p.last_reset_ledger, start_ledger as u64,
+            "last_reset_ledger must not change when no reset fires"
         );
 
-        // Check initial state
-        let policy = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy.daily_spent_stroops, 0);
-        assert_eq!(policy.last_reset_ledger, 0);
-
-        // Advance to day 2 (ledger DAY_LEDGERS + 1)
-        env.ledger().with_mut(|li| {
-            li.sequence_number = (DAY_LEDGERS + 1) as u32;
-            li.min_persistent_entry_ttl = TEST_MAX_TTL;
-            li.min_temp_entry_ttl = TEST_MAX_TTL;
-        });
-        
-        // Check that get_policy resets
-        let policy_day2 = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy_day2.daily_spent_stroops, 0);
-        assert_eq!(policy_day2.last_reset_ledger, DAY_LEDGERS + 1);
-        
-        // Advance to day 3 (2 * DAY_LEDGERS + 1)
-        env.ledger().with_mut(|li| {
-            li.sequence_number = (2 * DAY_LEDGERS + 1) as u32;
-            li.min_persistent_entry_ttl = TEST_MAX_TTL;
-            li.min_temp_entry_ttl = TEST_MAX_TTL;
-        });
-        
-        // Should reset again
-        let policy_day3 = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(policy_day3.daily_spent_stroops, 0);
-        assert_eq!(policy_day3.last_reset_ledger, 2 * DAY_LEDGERS + 1);
+        // Also verify check_spending_allowed sees the accumulated spend
+        // (seeded_spend = 750, max = 1000, so 251 should be allowed, 251+750=1001 blocked)
+        assert!(
+            client.check_spending_allowed(&agent_addr, &250),
+            "250 should still fit within the daily budget"
+        );
+        assert!(
+            !client.check_spending_allowed(&agent_addr, &251),
+            "251 should be rejected because 750+251 > 1000"
+        );
     }
 
     #[test]

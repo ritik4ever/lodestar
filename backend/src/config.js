@@ -88,7 +88,14 @@ const config = Object.freeze({
     ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
     : ['http://localhost:3000'],
 
+  // Whether CORS_ORIGIN was explicitly provided (vs. the localhost fallback
+  // above). Used by validateConfig() to fail startup in production instead
+  // of silently trusting localhost.
+  _corsOriginExplicit: Boolean(process.env.CORS_ORIGIN),
+
   jsonBodyLimit: process.env.JSON_BODY_LIMIT ?? '100kb',
+
+  redisUrl: process.env.REDIS_URL,
 
   // Trust proxy setting for Express — required so rate limiting reads the real
   // client IP (X-Forwarded-For) when running behind a reverse proxy (e.g. Render).
@@ -133,6 +140,17 @@ const config = Object.freeze({
   // and pending transaction checks before force-exiting. Default is just over
   // the max polling window (30 s) so an in-flight poll can finish.
   shutdownTimeoutMs: parsePositiveInt(process.env.SHUTDOWN_TIMEOUT_MS, 35_000, 'SHUTDOWN_TIMEOUT_MS'),
+
+  // RPC retry with jittered exponential backoff for transient failures.
+  // 429 (rate-limited) and 5xx responses from public Stellar RPC endpoints are
+  // retried automatically so a brief throttle doesn't become a user-visible
+  // failure. Each retry delays baseDelayMs * 2^attempt with ±50 % jitter, capped
+  // at maxDelayMs. After maxRetries the call fails with code RPC_THROTTLED.
+  rpcRetry: {
+    maxRetries: parsePositiveInt(process.env.RPC_RETRY_MAX_RETRIES, 4, 'RPC_RETRY_MAX_RETRIES'),
+    baseDelayMs: parsePositiveInt(process.env.RPC_RETRY_BASE_DELAY_MS, 200, 'RPC_RETRY_BASE_DELAY_MS'),
+    maxDelayMs: parsePositiveInt(process.env.RPC_RETRY_MAX_DELAY_MS, 5_000, 'RPC_RETRY_MAX_DELAY_MS'),
+  },
 });
 
 export default config;
@@ -162,6 +180,24 @@ export function validateConfig(log = _consoleLog) {
   ) {
     errors.push(
       `Invalid PAYMENT_ADDRESS="${process.env.PAYMENT_ADDRESS}" — must be a valid G... Stellar address`,
+    );
+  }
+
+  // A forgotten CORS_ORIGIN in production silently falls back to
+  // http://localhost:3000, which fails closed for real users but is
+  // confusing to diagnose. Require it to be set explicitly instead.
+  if (config.nodeEnv === 'production' && !config._corsOriginExplicit) {
+    errors.push(
+      'CORS_ORIGIN must be set explicitly when NODE_ENV=production (refusing to fall back to http://localhost:3000)',
+    );
+  }
+
+  // credentials: true is always enabled on the CORS middleware (see index.js),
+  // so an origin of "*" is both spec-invalid and a footgun that would trust
+  // any site with credentialed requests. Reject it in every environment.
+  if (config.corsOrigin.includes('*')) {
+    errors.push(
+      "CORS_ORIGIN cannot include '*' because CORS is mounted with credentials: true — list explicit origin(s) instead",
     );
   }
 

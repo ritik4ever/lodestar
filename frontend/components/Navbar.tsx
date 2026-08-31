@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import WalletConnect from './WalletConnect';
+import { useTheme } from './ThemeProvider';
 
 const links = [
   { href: '/registry', label: 'Registry' },
@@ -13,6 +14,7 @@ const links = [
 
 export default function Navbar() {
   const pathname = usePathname();
+  const { theme, toggleTheme } = useTheme();
 
   // Exact match for the home route, prefix match for nested routes so a link
   // stays highlighted on its sub-pages (e.g. /agents while on /agents/[address])
@@ -54,6 +56,21 @@ export default function Navbar() {
             })}
           </div>
           <div className="hidden md:flex items-center gap-3">
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-lg text-secondary hover:text-primary transition-colors"
+              title="Toggle theme"
+            >
+              {theme === 'light' ? (
+                <svg height="20" width="20" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z"/>
+                </svg>
+              ) : (
+                <svg height="20" width="20" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
+                </svg>
+              )}
+            </button>
             <a
               href="https://github.com/ritik4ever/lodestar/blob/main/README.md"
               target="_blank"

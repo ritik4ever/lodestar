@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="750" viewBox="0 0 1200 750" role="img" aria-label="Demo recording placeholder with playback controls for the agent walkthrough">
+  <rect width="1200" height="750" fill="#0f172a"/>
+  <rect x="80" y="90" width="1040" height="560" rx="32" fill="#111827" stroke="#334155" stroke-width="2"/>
+  <rect x="160" y="170" width="640" height="360" rx="24" fill="#020617" stroke="#38bdf8" stroke-width="4"/>
+  <circle cx="480" cy="350" r="70" fill="#38bdf8" opacity="0.9"/>
+  <path d="M455 320 L525 350 L455 380 Z" fill="#ffffff"/>
+  <rect x="840" y="220" width="180" height="80" rx="18" fill="#1e293b"/>
+  <rect x="840" y="340" width="180" height="80" rx="18" fill="#1e293b"/>
+  <rect x="840" y="460" width="180" height="80" rx="18" fill="#1e293b"/>
+  <text x="80" y="670" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="28">Recording-style preview for the demo walkthrough</text>
+</svg>

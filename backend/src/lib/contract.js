@@ -26,6 +26,24 @@ import {
   TransactionFailedError,
   TransactionTimeoutError,
 } from './contractErrors.js';
+import {
+  trackPendingTransaction,
+  removePendingTransaction,
+  getPendingTransactionCount,
+  getPendingTransactions,
+  dumpPendingTransactions,
+  resumePendingTransactions,
+  __resetPendingTransactions,
+} from './pendingTx.js';
+
+// Re-export pendingTx functions so contract.js public interface is unchanged
+export {
+  getPendingTransactionCount,
+  getPendingTransactions,
+  dumpPendingTransactions,
+  resumePendingTransactions,
+  __resetPendingTransactions,
+};
 
 
 const TIMEOUT = 30;
@@ -70,133 +88,10 @@ let lastSeqSyncTime = 0;
 const preparedRegistrySubmissions = new Map();
 let assembleTransactionForSubmit = rpc.assembleTransaction;
 
-// ── Pending Transactions Registry ──────────────────────────────────────────────
-//
-// Tracks every submitted Soroban transaction from sendTransaction until
-// getTransaction confirms it (SUCCESS or FAILED). On graceful shutdown the
-// registry is dumped to pending-transactions.json so operators can manually
-// verify on-chain status. On restart any still-unconfirmed hashes are
-// re-polled before accepting new requests.
-
-const pendingTransactions = new Map();
-const PENDING_TRANSACTIONS_FILE = 'pending-transactions.json';
-
-function getOperationName(operation) {
-  if (typeof operation === 'string') return operation;
-  try {
-    if (operation && typeof operation === 'object') {
-      if (operation.method) return operation.method;
-      if (operation._method) return operation._method;
-      if (operation.func) {
-        try {
-          return operation.func.invokeContract().functionName().toString();
-        } catch {}
-      }
-    }
-  } catch {}
-  return 'unknown';
-}
-
-function trackPendingTransaction(hash, operation) {
-  pendingTransactions.set(hash, {
-    hash,
-    operation: getOperationName(operation),
-    submittedAt: Date.now(),
-  });
-}
-
-function removePendingTransaction(hash) {
-  pendingTransactions.delete(hash);
-}
-
-export function getPendingTransactionCount() {
-  return pendingTransactions.size;
-}
-
-export function getPendingTransactions() {
-  return Array.from(pendingTransactions.values());
-}
-
-/** @note Exported for tests — not part of the public API. */
-export function __resetPendingTransactions() {
-  pendingTransactions.clear();
-}
-
-/**
- * Dump all currently-pending transaction entries to
- * pending-transactions.json for operator inspection. Safe to call
- * multiple times — overwrites the file each time.
- */
-export function dumpPendingTransactions() {
-  const entries = Array.from(pendingTransactions.values());
-  if (entries.length === 0) return;
-  try {
-    writeFileSync(PENDING_TRANSACTIONS_FILE, JSON.stringify(entries, null, 2), 'utf-8');
-    logger.warn(
-      { count: entries.length, file: PENDING_TRANSACTIONS_FILE },
-      'Dumped pending transactions to file',
-    );
-  } catch (err) {
-    logger.error({ err }, 'Failed to dump pending transactions');
-  }
-}
-
-/**
- * On startup, check for pending-transactions.json from a previous run and
- * attempt to re-poll any unconfirmed hashes. Confirmed or failed entries
- * are logged; still-unconfirmed entries are re-added to the in-memory
- * registry so the next shutdown will preserve them again.
- */
-export async function resumePendingTransactions() {
-  let entries;
-  try {
-    if (!existsSync(PENDING_TRANSACTIONS_FILE)) return;
-    const data = readFileSync(PENDING_TRANSACTIONS_FILE, 'utf-8');
-    entries = JSON.parse(data);
-  } catch {
-    return;
-  }
-
-  if (!Array.isArray(entries) || entries.length === 0) return;
-
-  logger.warn(
-    { count: entries.length, file: PENDING_TRANSACTIONS_FILE },
-    'Resuming polling for unconfirmed transactions from previous run',
-  );
-
-  const server = getStellarServer();
-  for (const entry of entries) {
-    try {
-      const getResult = await server.getTransaction(entry.hash);
-      if (getResult.status === 'SUCCESS') {
-        logger.info({ hash: entry.hash, operation: entry.operation }, 'Pending transaction from previous run confirmed SUCCESS');
-      } else if (getResult.status === 'FAILED') {
-        logger.warn({ hash: entry.hash, operation: entry.operation }, 'Pending transaction from previous run FAILED on-chain');
-      } else {
-        trackPendingTransaction(entry.hash, { method: entry.operation });
-        logger.warn({ hash: entry.hash, operation: entry.operation }, 'Pending transaction from previous run still unconfirmed, re-added to registry');
-      }
-    } catch (err) {
-      logger.error({ err, hash: entry.hash, operation: entry.operation }, 'Failed to check pending transaction from previous run');
-      trackPendingTransaction(entry.hash, { method: entry.operation });
-    }
-  }
-
-  // Only delete the file once every entry has been processed and re-tracked.
-  // If the process is killed mid-resume the file remains for the next restart.
-  try {
-    unlinkSync(PENDING_TRANSACTIONS_FILE);
-  } catch {
-    // best-effort — file may already be gone
-  }
-
-  if (pendingTransactions.size > 0) {
-    logger.warn(
-      { count: pendingTransactions.size },
-      'Pending transactions remain after resume — will be re-dumped on next shutdown',
-    );
-  }
-}
+// Pending transaction tracking is now imported from ./pendingTx.js
+// (trackPendingTransaction, removePendingTransaction, getPendingTransactionCount,
+// getPendingTransactions, dumpPendingTransactions, resumePendingTransactions,
+// __resetPendingTransactions).
 
 export function __setAssembleTransactionForTest(fn) {
   assembleTransactionForSubmit = fn ?? rpc.assembleTransaction;
@@ -460,7 +355,7 @@ export async function simulateReadBatch(operations) {
 }
 
 
-export async function listServices({ category, page = 0, pageSize = 20 } = {}) {
+export async function listServices({ category, offset = 0, limit = 20 } = {}) {
   try {
     const contract = getContract();
 
@@ -469,9 +364,9 @@ export async function listServices({ category, page = 0, pageSize = 20 } = {}) {
       : xdr.ScVal.scvVoid();
 
     const callOp = contract.call(
-      'list_services_page',
-      nativeToScVal(page, { type: 'u32' }),
-      nativeToScVal(pageSize, { type: 'u32' }),
+      'list_services',
+      nativeToScVal(offset, { type: 'u32' }),
+      nativeToScVal(limit, { type: 'u32' }),
       optionArg,
     );
     const retval = await simulateRead(callOp);
@@ -540,11 +435,11 @@ export async function getServiceCount() {
 
 export const contractHelpers = {
   activeServiceExists: async function (provider, endpoint, fetchServices = listServices) {
-    let page = 0;
-    const pageSize = 20;
+    let offset = 0;
+    const limit = 20;
 
     while (true) {
-      const services = await fetchServices({ page, pageSize });
+      const services = await fetchServices({ offset, limit });
       if (!services.length) {
         return false;
       }
@@ -553,16 +448,16 @@ export const contractHelpers = {
         return true;
       }
 
-      page += 1;
+      offset += limit;
     }
   },
 
   activeServiceExistsByName: async function (provider, name, fetchServices = listServices) {
-    let page = 0;
-    const pageSize = 20;
+    let offset = 0;
+    const limit = 20;
 
     while (true) {
-      const services = await fetchServices({ page, pageSize });
+      const services = await fetchServices({ offset, limit });
       if (!services.length) {
         return false;
       }
@@ -571,7 +466,7 @@ export const contractHelpers = {
         return true;
       }
 
-      page += 1;
+      offset += limit;
     }
   },
 };
@@ -585,18 +480,18 @@ export async function activeServiceExistsByName(provider, name, fetchServices = 
 }
 
 export async function listServicesByProvider(provider, fetchServices = listServices) {
-  let page = 0;
-  const pageSize = 20;
+  let offset = 0;
+  const limit = 20;
   const matches = [];
 
   while (true) {
-    const services = await fetchServices({ page, pageSize });
+    const services = await fetchServices({ offset, limit });
     if (!services.length) {
       return matches;
     }
 
     matches.push(...services.filter((service) => service.provider === provider));
-    page += 1;
+    offset += limit;
   }
 }
 

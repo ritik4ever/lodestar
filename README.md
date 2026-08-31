@@ -1,7 +1,36 @@
 # Lodestar
 ### Navigate the agent economy — discover, pay, and build trust.
 
+
 Lodestar solves the missing discovery layer in the x402 agentic payments ecosystem on Stellar — today AI agents can pay for services but cannot find them autonomously because every service URL is hardcoded by a human, so Lodestar ships two Soroban smart contracts: the first is a permanent neutral on-chain registry where any service provider registers their x402 endpoint once with a price and category and it becomes discoverable forever, and the second tracks every AI agent's on-chain identity giving each agent a credit score from 0 to 1000 that rises with successful payments and falls with failures, enforces programmable per-transaction and daily spending limits at the contract level, and allows service providers to gate access to premium services by minimum score — all of this is exposed through an Express backend with real x402-protected demo endpoints for weather and search, a Next.js frontend where providers can register services and agents can view their scores, and a standalone autonomous agent script that starts with zero hardcoded URLs, queries the registry, discovers the best service by reputation, pays via USDC on Stellar testnet through the x402 protocol, receives real data back, and updates its own credit score on-chain — making Lodestar the complete infrastructure layer for the agentic economy covering discovery, payment, and trust in a single production-grade open source project that directly addresses all three requirements the Stellar Hacks judges explicitly called out in the hackathon brief.
+
+If you are new to x402, start with the [x402 primer](docs/x402-primer.md) for a simple explanation of the 402 challenge, the payment headers, the facilitator role, and how Stellar settlement fits into the flow.
+
+---
+
+## Project Status and Roadmap
+
+Lodestar is currently an early-stage, demo-ready project for the Stellar ecosystem. It is suitable for evaluation, experimentation, and contributor feedback, but it is not yet a production-grade platform for mission-critical payments or broad public deployment.
+
+### Current maturity
+- The core discovery, payment, and reputation flow is implemented and exercised in the demo app.
+- The project includes live testnet deployments for the frontend, backend API, and Soroban contracts.
+- The codebase is actively evolving and is best treated as a working prototype with room for hardening.
+
+### Deployment status
+- Frontend: https://lodestar-ruddy.vercel.app
+- Backend API: https://lodestar-8na4.onrender.com/api/services
+- Health check: https://lodestar-8na4.onrender.com/healthz
+- Registry contract: [CAKZALA72JTR6BV6N44E7L52C7QU5BAYYKVKYR2DFSV2YD2A2OI6WJMP](https://stellar.expert/explorer/testnet/contract/CAKZALA72JTR6BV6N44E7L52C7QU5BAYYKVKYR2DFSV2YD2A2OI6WJMP)
+- Agents contract: [CCT4FUTW54K7BYZFOCBEM5MVLS42ZE25WJ3ONW7RLYXAF3HQS7ZQYA2N](https://stellar.expert/explorer/testnet/contract/CCT4FUTW54K7BYZFOCBEM5MVLS42ZE25WJ3ONW7RLYXAF3HQS7ZQYA2N)
+
+### Known limitations
+- The current deployment targets Stellar testnet and is not yet a mainnet production rollout.
+- The demo experience is useful for validation, but operational hardening, monitoring, and broader real-world testing are still pending.
+- Some UX and onboarding flows are intentionally lightweight and may evolve as contributors shape the roadmap.
+
+### Roadmap
+The short-term direction is to harden the core experience, improve documentation, and expand the set of supported payment and discovery flows. Follow the GitHub milestones for ongoing priorities: https://github.com/Stellar-Ecosystem/lodestar/milestones
 
 ---
 
@@ -11,7 +40,7 @@ Lodestar ships two Soroban contracts: the **Service Registry** (discovery + repu
 
 ## The Problem
 
-AI agents can already pay for services via the x402 protocol on Stellar. But they cannot find services on their own — every URL is hardcoded by a human. This breaks the promise of autonomous agents: if a developer has to manually wire every service endpoint into every agent, you haven't built autonomy, you've built a very expensive API client.
+AI agents can already pay for services via the x402 protocol on Stellar. But they cannot find services on their own — every URL is hardcoded by a human. This breaks the promise of autonomous agents: if a developer has to manually wire every service endpoint into every agent, you haven't built autonomy, you've built a very expensive API client. For a beginner-friendly explanation of the flow, see the [x402 primer](docs/x402-primer.md).
 
 ## The Solution
 
@@ -20,6 +49,8 @@ Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. 
 ---
 
 ## Architecture
+
+> **Note:** For a detailed breakdown of component responsibilities, trust boundaries, failure modes, data flow, and why the system is split this way, see [docs/architecture.md](docs/architecture.md).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -55,7 +86,7 @@ Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. 
 
 ### Provider flow
 1. Deploy any HTTP service that returns `402 Payment Required` with x402 headers
-2. Ask the backend for `POST /api/registry/prepare-register`, which builds an unsigned Soroban transaction using your real Stellar address as `provider`
+2. Ask the backend for `POST /api/registry/prepare-register`, which builds an unsigned Soroban transaction using your real Stellar address as `provider`. Field limits: `name` 3–64 characters, `description` 10–256 characters, `endpoint` at most 256 characters, `category` 1–32 characters.
 3. Sign that XDR in Freighter (or another wallet) and submit it through `POST /api/registry/submit-signed-tx`
 4. If an active service with the same provider and endpoint already exists, registration is rejected to prevent duplicate active entries
 5. Your service is now permanently discoverable by any agent querying the registry
@@ -63,7 +94,7 @@ Lodestar is a Soroban smart contract that acts as a neutral, on-chain registry. 
 ### Agent flow
 1. Call `list_services(category)` — returns active services sorted by reputation
 2. Pick the top result (highest reputation, lowest price, or newest)
-3. Make an HTTP request to the endpoint — receive a `402 Payment Required` response
+3. Make an HTTP request to the endpoint — receive a `402 Payment Required` response. For the search endpoint, the `q` query parameter is trimmed and normalized before forwarding. Queries longer than 256 characters are rejected with HTTP 400 `INVALID_QUERY`.
 4. Build and sign an x402 payment transaction on Stellar using the agent's keypair
 5. Retry the request with the payment header — receive the data
 6. Optionally call `update_reputation` to improve the service's score for future agents
@@ -140,6 +171,8 @@ SEEDING_MODE=true node scripts/seed.js
 ```
 
 This registers the four demo services (weather, search, and two live Stellar services) into the on-chain registry.
+
+> **Seeded data caveat**: The demo seeding scripts (`scripts/demo/boost-scores.js`, `scripts/seed-agents.js`) programmatically inflate agent scores by submitting synthetic on-chain payments. This is intentional — without it the leaderboard would show every agent at score 100 and the demo would be uninteresting. These scripts are **demo-only** and must never be run against mainnet. The `boost-scores` script enforces this with a network passphrase guard.
 
 ### 5. Start backend
 
@@ -231,6 +264,15 @@ Copy the printed contract ID, add to `.env` as `AGENTS_CONTRACT_ID`, then:
 cd backend && npm run seed-agents
 ```
 
+To give the demo agents varied credit scores (so the leaderboard is not flat), run the optional demo boost script:
+
+```sh
+node scripts/demo/boost-scores.js --dry-run   # preview payments
+node scripts/demo/boost-scores.js             # submit them
+```
+
+> This script is **demo-only** and refuses to run against the Stellar mainnet passphrase.
+
 ---
 
 ## Agent Leaderboard
@@ -290,6 +332,7 @@ Lodestar addresses all three brief requirements:
 - **Frontend**: https://lodestar-ruddy.vercel.app
 - **Backend API**: https://lodestar-8na4.onrender.com/api/services
 - **Health Check**: https://lodestar-8na4.onrender.com/healthz
+- **Deployments**: [contract/deployments.json](contract/deployments.json) — canonical source of truth for all live contract addresses and WASM hashes
 - **Registry Contract**: [`CAKZALA72JTR6BV6N44E7L52C7QU5BAYYKVKYR2DFSV2YD2A2OI6WJMP`](https://stellar.expert/explorer/testnet/contract/CAKZALA72JTR6BV6N44E7L52C7QU5BAYYKVKYR2DFSV2YD2A2OI6WJMP)
 - **Agents Contract**: [`CCT4FUTW54K7BYZFOCBEM5MVLS42ZE25WJ3ONW7RLYXAF3HQS7ZQYA2N`](https://stellar.expert/explorer/testnet/contract/CCT4FUTW54K7BYZFOCBEM5MVLS42ZE25WJ3ONW7RLYXAF3HQS7ZQYA2N)
 
@@ -314,7 +357,8 @@ Full payment history: [GAY42L…KGU3 on Stellar Explorer](https://stellar.expert
 
 ## Demo Video
 
-> Paste link here after recording.
+- [Short walkthrough of the agent run](docs/assets/demo-recording.svg) — a lightweight recording-style preview of the registry, agent scoring, and payment flow.
+- Live deployment: https://lodestar-ruddy.vercel.app
 
 ---
 

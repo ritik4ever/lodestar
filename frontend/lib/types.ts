@@ -34,6 +34,7 @@ export interface ServicesResponse {
 export interface ReputationResponse {
   success: boolean;
   newReputation: number;
+  txHash?: string;
 }
 
 export interface ActivityEntry {

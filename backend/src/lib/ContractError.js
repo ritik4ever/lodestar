@@ -12,6 +12,9 @@ export function handleContractError(err, res, defaultMessage, defaultCode) {
     if (err.code === 'TRANSACTION_TIMEOUT') {
       status = 504;
     }
+    if (err.code === 'RPC_THROTTLED') {
+      status = 503;
+    }
     return res.status(status).json({ error: err.message, code: err.code });
   }
   return res.status(500).json({ error: defaultMessage, code: defaultCode });

@@ -108,6 +108,29 @@ impl LodestarRegistry {
     ) -> u64 {
         provider.require_auth();
 
+        assert!(name.len() >= 3, "name must be 3-64 characters");
+        assert!(name.len() <= 64, "name must be 3-64 characters");
+        assert!(
+            description.len() >= 10,
+            "description must be 10-256 characters"
+        );
+        assert!(
+            description.len() <= 256,
+            "description must be 10-256 characters"
+        );
+        assert!(
+            endpoint.len() <= 256,
+            "endpoint must be at most 256 characters"
+        );
+        assert!(
+            category.len() >= 1,
+            "category must be 1-32 characters"
+        );
+        assert!(
+            category.len() <= 32,
+            "category must be 1-32 characters"
+        );
+
         assert!(
             !active_service_exists(&env, &provider, &endpoint),
             "Active service with same provider and endpoint already exists"
@@ -185,14 +208,14 @@ impl LodestarRegistry {
             .expect("Service not found")
     }
 
-    pub fn list_services_page(
+    pub fn list_services(
         env: Env,
-        page: u32,
-        page_size: u32,
+        offset: u32,
+        limit: u32,
         category: Option<String>,
     ) -> Vec<ServiceEntry> {
-        let page_size = page_size.min(20u32).max(1u32);
-        let start: u32 = page * page_size;
+        let limit = limit.min(50u32).max(1u32);
+        let start: u32 = offset;
 
         let ids: Vec<u64> = if let Some(ref cat) = category {
             env.storage()
@@ -207,7 +230,7 @@ impl LodestarRegistry {
         };
 
         let total = ids.len();
-        let end = (start + page_size).min(total);
+        let end = (start + limit).min(total);
 
         let mut services: Vec<ServiceEntry> = vec![&env];
         let mut i = start;
@@ -241,6 +264,50 @@ impl LodestarRegistry {
         }
 
         services
+    }
+
+    /// List a single page of services in registration order, filtering only active services.
+    /// This avoids the pagination bug where inactive services cause short pages.
+    /// 
+    /// Unlike list_services, this function ensures that every page except the last
+    /// contains exactly page_size entries when enough active services exist.
+    pub fn list_services_page(env: Env, page: u32, page_size: u32) -> Vec<ServiceEntry> {
+        let page_size = page_size.min(20u32).max(1u32);
+        
+        let ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ServiceIds)
+            .unwrap_or_else(|| vec![&env]);
+
+        let mut result: Vec<ServiceEntry> = vec![&env];
+        let total_ids = ids.len() as usize;
+        let mut active_count = 0;
+        let mut found_count = 0;
+        let target_skip = page as usize * page_size as usize;
+
+        // Walk through all services, counting active ones until we reach our page
+        for i in 0..total_ids {
+            if let Some(entry) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, ServiceEntry>(&DataKey::Service(ids.get(i as u32).unwrap()))
+            {
+                if entry.active {
+                    if active_count >= target_skip {
+                        // We're in the target page range
+                        result.push_back(entry);
+                        found_count += 1;
+                        if found_count >= page_size as usize {
+                            break;
+                        }
+                    }
+                    active_count += 1;
+                }
+            }
+        }
+
+        result
     }
 
     /// Cast a reputation vote on a service.
@@ -362,6 +429,11 @@ impl LodestarRegistry {
 
 #[cfg(test)]
 mod test {
+    // This crate is no_std; `format!` lives in `alloc` and must be imported
+    // explicitly for the tests that build strings.
+    extern crate alloc;
+    use alloc::format;
+
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
@@ -422,7 +494,7 @@ mod test {
 
         env.clone().as_contract(&contract_id, || {
             // Test with no services registered
-            let result = LodestarRegistry::list_services_page(env.clone(), 0, 20, None);
+            let result = LodestarRegistry::list_services(env.clone(), 0, 20, None);
             assert_eq!(result.len(), 0);
         });
     }
@@ -437,7 +509,7 @@ mod test {
             setup_service(&env, 1, &provider, "compute", 0, true);
 
             // Test listing all services
-            let result = LodestarRegistry::list_services_page(env, 0, 20, None);
+            let result = LodestarRegistry::list_services(env, 0, 20, None);
             assert_eq!(result.len(), 1);
             assert_eq!(result.get(0).unwrap().id, 1);
         });
@@ -457,7 +529,7 @@ mod test {
             setup_service(&env, 3, &provider, "compute", -1, true);
 
             // Test sorting (should be descending: 1=2, 2=1, 3=-1)
-            let result = LodestarRegistry::list_services_page(env, 0, 20, None);
+            let result = LodestarRegistry::list_services(env, 0, 20, None);
             assert_eq!(result.len(), 3);
             assert_eq!(result.get(0).unwrap().id, 1);
             assert_eq!(result.get(1).unwrap().id, 2);
@@ -479,7 +551,7 @@ mod test {
             setup_service(&env, 3, &provider, "compute", 1, true);
 
             // Test that all are returned (order may vary for ties)
-            let result = LodestarRegistry::list_services_page(env, 0, 20, None);
+            let result = LodestarRegistry::list_services(env, 0, 20, None);
             assert_eq!(result.len(), 3);
 
             // Verify all have same reputation
@@ -505,7 +577,7 @@ mod test {
             setup_service(&env, 3, &provider, "compute", 0, true);
 
             // Test filtering by compute category
-            let compute_result = LodestarRegistry::list_services_page(
+            let compute_result = LodestarRegistry::list_services(
                 env.clone(),
                 0,
                 20,
@@ -514,7 +586,7 @@ mod test {
             assert_eq!(compute_result.len(), 2);
 
             // Test filtering by storage category
-            let storage_result = LodestarRegistry::list_services_page(
+            let storage_result = LodestarRegistry::list_services(
                 env.clone(),
                 0,
                 20,
@@ -524,7 +596,7 @@ mod test {
             assert_eq!(storage_result.get(0).unwrap().id, 2);
 
             // Test with no filter (should return all)
-            let all_result = LodestarRegistry::list_services_page(env, 0, 20, None);
+            let all_result = LodestarRegistry::list_services(env, 0, 20, None);
             assert_eq!(all_result.len(), 3);
         });
     }
@@ -542,7 +614,7 @@ mod test {
             setup_service(&env, 2, &provider, "compute", 0, false);
 
             // Test that only active service is returned
-            let result = LodestarRegistry::list_services_page(env, 0, 20, None);
+            let result = LodestarRegistry::list_services(env, 0, 20, None);
             assert_eq!(result.len(), 1);
             assert_eq!(result.get(0).unwrap().id, 1);
         });
@@ -562,7 +634,7 @@ mod test {
             setup_service(&env, 3, &provider, "storage", 1, true);
 
             // Test filtering by compute category with reputation sorting
-            let compute_result = LodestarRegistry::list_services_page(
+            let compute_result = LodestarRegistry::list_services(
                 env.clone(),
                 0,
                 20,
@@ -586,13 +658,135 @@ mod test {
             setup_service(&env, 1, &provider, "compute", 0, true);
 
             // Test filtering by non-existent category
-            let result = LodestarRegistry::list_services_page(
+            let result = LodestarRegistry::list_services(
                 env.clone(),
                 0,
                 20,
                 Some(String::from_str(&env, "nonexistent")),
             );
             assert_eq!(result.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_list_services_page_basic() {
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        env.clone().as_contract(&contract_id, || {
+            let provider = Address::generate(&env);
+            
+            // Register 5 active services
+            for i in 1..=5 {
+                setup_service(&env, i, &provider, "compute", 0, true);
+            }
+
+            // Test first page with page_size=3
+            let page0 = LodestarRegistry::list_services_page(env.clone(), 0, 3);
+            assert_eq!(page0.len(), 3);
+            assert_eq!(page0.get(0).unwrap().id, 1);
+            assert_eq!(page0.get(1).unwrap().id, 2);
+            assert_eq!(page0.get(2).unwrap().id, 3);
+
+            // Test second page with page_size=3
+            let page1 = LodestarRegistry::list_services_page(env.clone(), 1, 3);
+            assert_eq!(page1.len(), 2); // Only 2 remaining services
+            assert_eq!(page1.get(0).unwrap().id, 4);
+            assert_eq!(page1.get(1).unwrap().id, 5);
+
+            // Test beyond available pages
+            let page2 = LodestarRegistry::list_services_page(env, 2, 3);
+            assert_eq!(page2.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_list_services_page_mixed_active_inactive() {
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        env.clone().as_contract(&contract_id, || {
+            let provider = Address::generate(&env);
+            
+            // Register services with alternating active/inactive pattern
+            // IDs 1,3,5,7,9 are active; IDs 2,4,6,8,10 are inactive
+            for i in 1..=10 {
+                let active = i % 2 == 1; // odd IDs are active
+                setup_service(&env, i, &provider, "compute", 0, active);
+            }
+
+            // Test first page with page_size=3
+            // Should get services 1, 3, 5 (first 3 active services)
+            let page0 = LodestarRegistry::list_services_page(env.clone(), 0, 3);
+            assert_eq!(page0.len(), 3);
+            assert_eq!(page0.get(0).unwrap().id, 1);
+            assert_eq!(page0.get(1).unwrap().id, 3);
+            assert_eq!(page0.get(2).unwrap().id, 5);
+
+            // Test second page with page_size=3
+            // Should get services 7, 9 (next 2 active services, only 2 remaining)
+            let page1 = LodestarRegistry::list_services_page(env.clone(), 1, 3);
+            assert_eq!(page1.len(), 2);
+            assert_eq!(page1.get(0).unwrap().id, 7);
+            assert_eq!(page1.get(1).unwrap().id, 9);
+
+            // Test third page - should be empty
+            let page2 = LodestarRegistry::list_services_page(env, 2, 3);
+            assert_eq!(page2.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_list_services_page_all_inactive() {
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        env.clone().as_contract(&contract_id, || {
+            let provider = Address::generate(&env);
+            
+            // Register 3 inactive services
+            for i in 1..=3 {
+                setup_service(&env, i, &provider, "compute", 0, false);
+            }
+
+            // Test first page - should be empty since all services are inactive
+            let page0 = LodestarRegistry::list_services_page(env, 0, 3);
+            assert_eq!(page0.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_list_services_page_empty_registry() {
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        env.clone().as_contract(&contract_id, || {
+            // Test with no services registered
+            let page0 = LodestarRegistry::list_services_page(env, 0, 3);
+            assert_eq!(page0.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_list_services_page_parameter_bounds() {
+        let env = Env::default();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+
+        env.clone().as_contract(&contract_id, || {
+            let provider = Address::generate(&env);
+            
+            // Register 5 active services
+            for i in 1..=5 {
+                setup_service(&env, i, &provider, "compute", 0, true);
+            }
+
+            // Test page_size clamping - should clamp 25 to 20
+            let result = LodestarRegistry::list_services_page(env.clone(), 0, 25);
+            assert_eq!(result.len(), 5); // All available services
+
+            // Test page_size clamping - should clamp 0 to 1
+            let result = LodestarRegistry::list_services_page(env, 0, 0);
+            assert_eq!(result.len(), 1); // One service due to min clamp
         });
     }
 
@@ -860,6 +1054,240 @@ mod test {
             .with_mut(|li| li.sequence_number += VOTE_COOLDOWN_LEDGERS as u32 + 1);
         registry.update_reputation(&1u64, &false, &agent);
         assert_eq!(registry.get_service(&1u64).reputation, MIN_REPUTATION);
+    }
+
+    // ── register_service input validation tests ───────────────────────────
+
+    #[test]
+    fn test_register_service_rejects_name_too_short() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "AB"),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_register_service_rejects_name_too_long() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        let long_name = "A".repeat(65);
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, &long_name),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_register_service_rejects_description_too_short() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, "123456789"),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_register_service_rejects_description_too_long() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        let long_desc = "A".repeat(257);
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, &long_desc),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_register_service_accepts_minimum_boundaries() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        // name = 3, description = 10 (minimum boundaries)
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "ABC"),
+                &String::from_str(&env, "1234567890"),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn test_register_service_accepts_maximum_boundaries() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        let long_name = "A".repeat(64);
+        let long_desc = "A".repeat(256);
+        // name = 64, description = 256 (maximum boundaries)
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, &long_name),
+                &String::from_str(&env, &long_desc),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn test_register_service_rejects_endpoint_too_long() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        let long_endpoint = format!("https://example.com/{}", "A".repeat(257));
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, &long_endpoint),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_register_service_accepts_endpoint_at_max() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        // endpoint = https:// + 248 chars = 256 total
+        let max_endpoint = format!("https://{}", "A".repeat(248));
+        assert_eq!(max_endpoint.len(), 256);
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, &max_endpoint),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, "compute"),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn test_register_service_rejects_category_empty() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, ""),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_register_service_rejects_category_too_long() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        let long_category = "A".repeat(33);
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, &long_category),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn test_register_service_accepts_category_at_max() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+
+        let max_category = "A".repeat(32);
+        assert!(registry
+            .try_register_service(
+                &provider,
+                &String::from_str(&env, "Valid Name"),
+                &String::from_str(&env, "Valid description long enough"),
+                &String::from_str(&env, "https://example.com"),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAYMENT"),
+                &String::from_str(&env, &max_category),
+            )
+            .is_ok());
     }
 
     #[test]

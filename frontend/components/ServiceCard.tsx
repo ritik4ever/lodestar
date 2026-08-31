@@ -30,6 +30,8 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
   const [copied, setCopied] = useState(false);
   const [reputation, setReputation] = useState(service.reputation);
   const [voting, setVoting] = useState(false);
+  const [pendingTx, setPendingTx] = useState<string | null>(null);
+  const [voteError, setVoteError] = useState('');
   const category = getCategoryMeta(service.category);
 
   function copyEndpoint() {
@@ -41,18 +43,27 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
   async function vote(positive: boolean) {
     if (voting) return;
     setVoting(true);
+    setVoteError('');
+    setPendingTx(null);
     try {
       const res = await submitReputation(service.id, positive);
+      if (res.txHash) {
+        setPendingTx(res.txHash);
+        // Show pending state briefly before updating reputation
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
       setReputation(res.newReputation);
       onReputationChange?.(service.id, res.newReputation);
-    } catch {
-      // ignore
+    } catch (err) {
+      setVoteError(err instanceof Error ? err.message : 'Vote failed');
     } finally {
       setVoting(false);
     }
   }
 
-  const ledger = `Ledger #${service.registered_at.toLocaleString()}`;
+  const ledger = service.registered_at != null
+    ? `Ledger #${Number(service.registered_at).toLocaleString()}`
+    : null;
 
   return (
     <div className="card p-6 flex flex-col gap-4 fade-in">
@@ -93,7 +104,7 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
           <button
             onClick={() => vote(false)}
             disabled={voting}
-            className="text-secondary hover:text-error transition-colors text-sm disabled:opacity-40"
+            className="text-secondary hover:text-error transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             −
           </button>
@@ -103,12 +114,33 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
           <button
             onClick={() => vote(true)}
             disabled={voting}
-            className="text-secondary hover:text-success transition-colors text-sm disabled:opacity-40"
+            className="text-secondary hover:text-success transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             +
           </button>
         </div>
       </div>
+
+      {pendingTx && (
+        <div className="flex items-center gap-2 text-xs text-secondary bg-background rounded-lg px-3 py-2 border border-border">
+          <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full spinner" />
+          <span className="truncate flex-1">Confirming vote...</span>
+          <a
+            href={`${EXPLORER_URL}/tx/${pendingTx}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent hover:underline shrink-0"
+          >
+            View
+          </a>
+        </div>
+      )}
+
+      {voteError && (
+        <p className="text-error text-xs bg-error/5 border border-error/20 rounded-lg px-3 py-2">
+          {voteError}
+        </p>
+      )}
 
       {/* Footer */}
       <div className="flex items-center justify-between border-t border-border pt-3 mt-1">
@@ -125,7 +157,8 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
 
       <button
         onClick={copyEndpoint}
-        className="btn-secondary w-full text-center text-sm"
+        disabled={voting}
+        className="btn-secondary w-full text-center text-sm disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Use Endpoint
       </button>

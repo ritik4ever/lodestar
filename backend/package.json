@@ -1,6 +1,7 @@
 {
   "name": "lodestar-backend",
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "description": "Lodestar service discovery backend — x402 on Stellar",
   "type": "module",
   "main": "src/index.js",
@@ -11,7 +12,8 @@
     "test:watch": "vitest",
     "seed": "node scripts/seed.js",
     "seed-agents": "node scripts/seed-agents.js",
-    "update-endpoints": "node scripts/update-endpoints.js"
+    "update-endpoints": "node scripts/update-endpoints.js",
+    "bench": "node src/lib/idempotency.bench.js"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.0.1",
@@ -22,15 +24,16 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^8.5.2",
+    "ioredis": "^5.11.1",
     "node-fetch": "^3.3.2",
     "p-queue": "^9.3.0",
-    "pino": "^9.3.2",
-    "pino-pretty": "^11.2.2"
+    "pino": "^9.3.2"
   },
   "engines": {
     "node": ">=22.0.0"
   },
   "devDependencies": {
+    "ioredis-mock": "^8.13.1",
     "supertest": "^7.2.2",
     "vitest": "^1.6.1"
   }
