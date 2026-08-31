@@ -29,6 +29,7 @@ pub enum DataKey {
     Policy(Address),
     RegistryContract,
     Admin,
+    PendingAdmin,
 }
 
 // ServiceEntry shape (mirrors the registry contract) for cross-contract calls
@@ -481,7 +482,9 @@ impl LodestarAgents {
             .expect("admin not set — call initialize() first")
     }
 
-    // Transfer admin role to a new address (caller must be current admin)
+    // Two-step admin transfer — step 1: current admin proposes a pending admin.
+    // The admin role does NOT change until the pending address calls accept_admin.
+    // This prevents a typo from permanently bricking admin control.
     pub fn transfer_admin(env: Env, new_admin: Address, caller: Address) {
         caller.require_auth();
 
@@ -495,12 +498,68 @@ impl LodestarAgents {
             panic!("unauthorized");
         }
 
+        // Self-transfer is a no-op: promote immediately and clear any pending.
+        if new_admin == admin {
+            env.storage().persistent().remove(&DataKey::PendingAdmin);
+            return;
+        }
+
         env.storage()
             .persistent()
-            .set(&DataKey::Admin, &new_admin);
+            .set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::PendingAdmin, MAX_TTL, MAX_TTL);
+    }
+
+    // Two-step admin transfer — step 2: the pending address accepts the role.
+    // require_auth() proves the pending address actually controls its keys.
+    pub fn accept_admin(env: Env, caller: Address) {
+        caller.require_auth();
+
+        let pending: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingAdmin)
+            .expect("no pending admin transfer");
+
+        if caller != pending {
+            panic!("unauthorized: only the pending admin can accept");
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Admin, &pending);
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Admin, MAX_TTL, MAX_TTL);
+        env.storage().persistent().remove(&DataKey::PendingAdmin);
+    }
+
+    // Cancel a pending admin transfer (current admin only)
+    pub fn cancel_admin_transfer(env: Env, caller: Address) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("admin not set — call initialize() first");
+
+        if caller != admin {
+            panic!("unauthorized");
+        }
+
+        if !env.storage().persistent().has(&DataKey::PendingAdmin) {
+            panic!("no pending admin transfer");
+        }
+
+        env.storage().persistent().remove(&DataKey::PendingAdmin);
+    }
+
+    // Get the pending admin address, if a transfer is awaiting acceptance
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::PendingAdmin)
     }
 
     // List agents (paginated by limit)
@@ -809,7 +868,14 @@ mod test {
         let new_admin = Address::generate(&env);
         client.transfer_admin(&new_admin, &admin);
 
+        // Admin must NOT change before acceptance
+        assert_eq!(client.get_admin(), admin);
+        assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+        client.accept_admin(&new_admin);
+
         assert_eq!(client.get_admin(), new_admin);
+        assert_eq!(client.get_pending_admin(), None);
     }
 
     #[test]
@@ -824,6 +890,157 @@ mod test {
         let impostor = Address::generate(&env);
 
         assert!(client.try_transfer_admin(&new_admin, &impostor).is_err());
+        // No pending transfer may be created by an impostor
+        assert_eq!(client.get_pending_admin(), None);
+        assert_eq!(client.get_admin(), admin);
+    }
+
+    /// Acceptance criterion: transfer to an unauthorised/mistyped address
+    /// NEVER completes — admin control stays with the current admin until the
+    /// pending address itself accepts.
+    #[test]
+    fn test_transfer_to_unauthorised_address_never_completes() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        // Current admin "mistypes" the target address
+        let mistyped = Address::generate(&env);
+        client.transfer_admin(&mistyped, &admin);
+
+        // Admin unchanged, transfer pending
+        assert_eq!(client.get_admin(), admin);
+        assert_eq!(client.get_pending_admin(), Some(mistyped.clone()));
+
+        // A third party (not the pending address) cannot complete the transfer
+        let stranger = Address::generate(&env);
+        assert!(client.try_accept_admin(&stranger).is_err());
+        assert_eq!(client.get_admin(), admin);
+
+        // The mistyped address never accepts — old admin keeps control and can
+        // still perform admin operations (flag_agent) and cancel the transfer.
+        client.cancel_admin_transfer(&admin);
+        assert_eq!(client.get_pending_admin(), None);
+        assert_eq!(client.get_admin(), admin);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+        client.flag_agent(
+            &agent_addr,
+            &String::from_str(&env, "admin still works"),
+            &admin,
+        );
+        assert!(client.get_agent(&agent_addr).unwrap().flagged);
+    }
+
+    /// Old admin retains full control until the pending address accepts.
+    #[test]
+    fn test_old_admin_retains_control_until_acceptance() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let new_admin = Address::generate(&env);
+        client.transfer_admin(&new_admin, &admin);
+
+        // Pending admin CANNOT use admin powers before acceptance
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+        assert!(client
+            .try_flag_agent(
+                &agent_addr,
+                &String::from_str(&env, "pending admin too early"),
+                &new_admin,
+            )
+            .is_err());
+
+        // Old admin still can
+        client.flag_agent(
+            &agent_addr,
+            &String::from_str(&env, "old admin in charge"),
+            &admin,
+        );
+        assert!(client.get_agent(&agent_addr).unwrap().flagged);
+
+        // After acceptance the role flips
+        client.accept_admin(&new_admin);
+        assert_eq!(client.get_admin(), new_admin);
+        assert!(client
+            .try_flag_agent(
+                &agent_addr,
+                &String::from_str(&env, "pending admin too late"),
+                &admin,
+            )
+            .is_err());
+    }
+
+    /// Cancel: current admin aborts the pending transfer; pending address then
+    /// cannot accept anymore.
+    #[test]
+    fn test_cancel_admin_transfer() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let new_admin = Address::generate(&env);
+        client.transfer_admin(&new_admin, &admin);
+        assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+        // Only the current admin can cancel
+        let stranger = Address::generate(&env);
+        assert!(client.try_cancel_admin_transfer(&stranger).is_err());
+
+        client.cancel_admin_transfer(&admin);
+        assert_eq!(client.get_pending_admin(), None);
+
+        // Cancelled transfer cannot be accepted anymore
+        assert!(client.try_accept_admin(&new_admin).is_err());
+        assert_eq!(client.get_admin(), admin);
+    }
+
+    /// A new transfer overwrites the previous pending one.
+    #[test]
+    fn test_transfer_admin_overwrites_pending() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let first = Address::generate(&env);
+        let second = Address::generate(&env);
+        client.transfer_admin(&first, &admin);
+        client.transfer_admin(&second, &admin);
+
+        assert_eq!(client.get_pending_admin(), Some(second.clone()));
+
+        // Only the latest pending address can accept
+        assert!(client.try_accept_admin(&first).is_err());
+        client.accept_admin(&second);
+        assert_eq!(client.get_admin(), second);
+    }
+
+    /// Accept/cancel without a pending transfer must fail cleanly.
+    #[test]
+    fn test_accept_admin_without_pending_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let anyone = Address::generate(&env);
+        assert!(client.try_accept_admin(&anyone).is_err());
+        assert!(client.try_cancel_admin_transfer(&admin).is_err());
+        assert_eq!(client.get_admin(), admin);
     }
 
     #[test]
