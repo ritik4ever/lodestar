@@ -213,6 +213,44 @@ impl LodestarAgents {
             .persistent()
             .extend_ttl(&count_key, MAX_TTL, MAX_TTL);
 
+            pub fn set_policy(
+                    env: Env,
+                        agent_address: Address,
+                            max_per_tx_stroops: i128,
+                                max_per_day_stroops: i128,
+                                    allowed_categories: Vec<Symbol>,
+                                        min_score_to_earn: u32,
+                                            caller: Address,
+                                            ) {
+                                                caller.require_auth();
+
+                                                    let mut agent: AgentEntry = env
+                                                            .storage()
+                                                                    .persistent()
+                                                                            .get(&agent_address)
+                                                                                    .expect("agent not found");
+
+                                                                                        if agent.owner != caller {
+                                                                                                panic!("only the agent owner can update its policy");
+                                                                                                    }
+
+                                                                                                        // Preserve accrued spend state across the update
+                                                                                                            let preserved_daily_spent = agent.policy.daily_spent_stroops;
+                                                                                                                let preserved_last_reset = agent.policy.last_reset_ledger;
+
+                                                                                                                    agent.policy = SpendingPolicy {
+                                                                                                                            max_per_tx_stroops,
+                                                                                                                                    max_per_day_stroops,
+                                                                                                                                            allowed_categories,
+                                                                                                                                                    min_score_to_earn,
+                                                                                                                                                            daily_spent_stroops: preserved_daily_spent,
+                                                                                                                                                                    last_reset_ledger: preserved_last_reset,
+                                                                                                                                                                        };
+
+                                                                                                                                                                            env.storage().persistent().set(&agent_address, &agent);
+                                                                                                                                                                            }
+            )
+
         // Default spending policy
         let policy = SpendingPolicy {
             agent_address: agent_address.clone(),

@@ -165,7 +165,7 @@ export default function SpendingPolicyDisplay({ policy, walletAddress, agentOwne
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => toggleCategory(cat)}
+                    onClick={() => toggleCategory(setpolicy)}
                     className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
                       categories.includes(cat)
                         ? 'bg-primary/10 border-primary text-primary'
