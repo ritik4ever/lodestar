@@ -11,10 +11,9 @@ import { fetchAgentEligibility } from '@/lib/contract';
 import { useWallet } from '@/components/WalletContext';
 import { kitSignTransaction } from '@/lib/wallet';
 import { ScoreHistoryChart } from '@/components/ScoreHistoryChart';
+import StellarAddress from '@/components/StellarAddress';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
-const EXPLORER_URL =
-  process.env.NEXT_PUBLIC_EXPLORER_URL ?? 'https://stellar.expert/explorer/testnet';
 
 const ACCESS_TIERS = [
   { label: 'Basic services', minScore: 0 },
@@ -62,7 +61,6 @@ export default function AgentProfilePage() {
   const [policy, setPolicy] = useState<SpendingPolicy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const [customMinScore, setCustomMinScore] = useState(0);
   const [isEligible, setIsEligible] = useState<boolean | null>(null);
@@ -89,13 +87,6 @@ export default function AgentProfilePage() {
   useEffect(() => {
     load();
   }, [load]);
-
-  function copyAddress() {
-    if (!agent) return;
-    navigator.clipboard.writeText(agent.address);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
 
   const checkEligibility = async () => {
     if (!address) return;
@@ -181,20 +172,7 @@ export default function AgentProfilePage() {
           <div className="flex-1 min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight mb-2">{agent.name}</h1>
             <div className="flex items-center gap-2 flex-wrap">
-              <a
-                href={`${EXPLORER_URL}/account/${agent.address}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mono text-sm text-secondary hover:text-primary transition-colors truncate"
-              >
-                {agent.address}
-              </a>
-              <button
-                onClick={copyAddress}
-                className="text-xs text-secondary hover:text-primary transition-colors shrink-0"
-              >
-                {copied ? 'Copied' : 'Copy'}
-              </button>
+              <StellarAddress address={agent.address} className="text-sm" />
             </div>
           </div>
           <div className="flex items-center gap-6">
@@ -356,7 +334,7 @@ export default function AgentProfilePage() {
         <MetaItem label="Total volume" value={`$${totalVolumeUsdc} USDC`} />
         <MetaItem label="Registered at ledger" value={`#${Number(agent.registered_at).toLocaleString()}`} />
         <MetaItem label="Last active at ledger" value={`#${Number(agent.last_active).toLocaleString()}`} />
-        <MetaItem label="Owner" value={`${agent.owner.slice(0, 6)}…${agent.owner.slice(-4)}`} mono />
+        <MetaItem label="Owner" value={<StellarAddress address={agent.owner} className="text-sm" />} />
       </div>
     </div>
   );
@@ -385,7 +363,7 @@ function StatCard({
   );
 }
 
-function MetaItem({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function MetaItem({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div>
       <div className="text-xs text-secondary mb-0.5">{label}</div>

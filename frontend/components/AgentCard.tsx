@@ -1,13 +1,7 @@
 import Link from 'next/link';
 import type { AgentEntry } from '@/lib/types';
 import ScoreBadge from './ScoreBadge';
-
-function truncateAddr(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
-
-const EXPLORER_URL =
-  process.env.NEXT_PUBLIC_EXPLORER_URL ?? 'https://stellar.expert/explorer/testnet';
+import StellarAddress from './StellarAddress';
 
 interface Props {
   agent: AgentEntry;
@@ -31,14 +25,7 @@ export default function AgentCard({ agent }: Props) {
           >
             {agent.name}
           </Link>
-          <a
-            href={`${EXPLORER_URL}/account/${agent.address}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mono text-xs text-secondary hover:text-primary transition-colors"
-          >
-            {truncateAddr(agent.address)}
-          </a>
+          <StellarAddress address={agent.address} className="text-xs" />
         </div>
         <ScoreBadge score={agent.score} />
       </div>

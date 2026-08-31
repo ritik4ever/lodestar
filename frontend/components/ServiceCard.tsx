@@ -4,13 +4,7 @@ import { useState } from 'react';
 import { getCategoryMeta } from '@/lib/categoryMeta';
 import type { ServiceEntry } from '@/lib/types';
 import { submitReputation } from '@/lib/contract';
-
-const EXPLORER_URL =
-  process.env.NEXT_PUBLIC_EXPLORER_URL ?? 'https://stellar.expert/explorer/testnet';
-
-function truncateAddr(addr: string) {
-  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-}
+import StellarAddress from './StellarAddress';
 
 function truncateEndpoint(url: string) {
   try {
@@ -144,14 +138,7 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
 
       {/* Footer */}
       <div className="flex items-center justify-between border-t border-border pt-3 mt-1">
-        <a
-          href={`${EXPLORER_URL}/account/${service.provider}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mono text-xs text-secondary hover:text-primary transition-colors"
-        >
-          {truncateAddr(service.provider)}
-        </a>
+        <StellarAddress address={service.provider} className="text-xs" />
         <span className="text-xs text-secondary mono">{ledger}</span>
       </div>
 
