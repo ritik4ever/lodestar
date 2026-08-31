@@ -30,6 +30,12 @@ This document covers the component responsibilities, data flow, trust boundaries
 - **Off-chain Heavy Lifting:** The Express backend handles complex x402 negotiation, API proxying, and caching (like the agent leaderboard cache). These operations are computationally expensive or require network access outside the blockchain.
 - **Client-Side Autonomy:** The AI Agents are standalone scripts. This demonstrates true autonomy where the agent operates without hardcoded URLs, fetching all discovery and policy rules dynamically from the contracts.
 
+> **ADR:** The two-contract split between LodestarRegistry and LodestarAgents is
+> a significant architectural decision with consequences for cross-contract call
+> cost, deployment ordering, and independent upgradeability. The full trade-off
+> analysis, alternatives considered, and conditions for merging are documented in
+> **[ADR-0001: Two-Contract Split](./adr/0001-two-contract-split.md)**.
+
 ## Contract Storage
 
 Both contracts key their state with `#[contracttype]` `DataKey` enums. Every key,
