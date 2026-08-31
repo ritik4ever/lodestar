@@ -97,6 +97,18 @@ const config = Object.freeze({
 
   redisUrl: process.env.REDIS_URL,
 
+  // Dedicated structured audit trail for on-chain writes signed with the
+  // server's custodied key. One JSON-Lines record per signed transaction,
+  // emitted on a stream separate from the application log so it can be shipped
+  // to storage with its own (longer) retention. See docs/audit-log.md.
+  audit: {
+    enabled: process.env.AUDIT_LOG_ENABLED !== 'false',
+    // File to append audit records to. When empty, records go to stdout tagged
+    // { "stream": "audit" } so a log router can split them out.
+    file: process.env.AUDIT_LOG_FILE ?? 'audit-onchain.jsonl',
+    level: process.env.AUDIT_LOG_LEVEL ?? 'info',
+  },
+
   // Trust proxy setting for Express — required so rate limiting reads the real
   // client IP (X-Forwarded-For) when running behind a reverse proxy (e.g. Render).
   trustProxy: parseTrustProxy(process.env.TRUST_PROXY),

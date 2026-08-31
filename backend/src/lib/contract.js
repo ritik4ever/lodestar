@@ -19,6 +19,7 @@ import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs';
 import config from '../config.js';
 import { getStellarServer, getNetworkPassphrase } from './stellar.js';
 import logger from './logger.js';
+import { recordOnChainWrite, extractInvocation } from './auditLog.js';
 import { ContractError } from './ContractError.js';
 import {
   ReturnValueParseError,
@@ -185,71 +186,95 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
   const preparedTx = assembleTransactionForSubmit(tx, simResult).build();
   preparedTx.sign(keypair);
 
-  const sendStart = Date.now();
-  const sendResult = await server.sendTransaction(preparedTx);
-  logRpcCall('sendTransaction', Date.now() - sendStart);
-  if (sendResult.status === 'ERROR') {
-    let isBadSeq = false;
-    if (sendResult.errorResultXdr) {
-      try {
-        const txResult = xdr.TransactionResult.fromXDR(sendResult.errorResultXdr, 'base64');
-        const code = txResult.result().switch().name;
-        if (code === 'txBadSeq' || code === 'txBAD_SEQ') {
-          isBadSeq = true;
+  // Every transaction signed with a custodied key gets exactly one structured
+  // audit record (see ./auditLog.js). Details are captured now, at signing time;
+  // the record is emitted once below with the final result.
+  const auditBase = { actor: keypair.publicKey(), ...extractInvocation(operation) };
+  const signedAt = Date.now();
+  let audited = false;
+  const emitAudit = (fields) => {
+    if (audited) return;
+    audited = true;
+    recordOnChainWrite({ ...auditBase, latencyMs: Date.now() - signedAt, ...fields });
+  };
+
+  try {
+    const sendStart = Date.now();
+    const sendResult = await server.sendTransaction(preparedTx);
+    logRpcCall('sendTransaction', Date.now() - sendStart);
+    if (sendResult.status === 'ERROR') {
+      let isBadSeq = false;
+      if (sendResult.errorResultXdr) {
+        try {
+          const txResult = xdr.TransactionResult.fromXDR(sendResult.errorResultXdr, 'base64');
+          const code = txResult.result().switch().name;
+          if (code === 'txBadSeq' || code === 'txBAD_SEQ') {
+            isBadSeq = true;
+          }
+        } catch (e) {
+          // Ignore parse errors here
         }
-      } catch (e) {
-        // Ignore parse errors here
+      }
+      if (!isBadSeq && (JSON.stringify(sendResult).includes('txBAD_SEQ') || JSON.stringify(sendResult).includes('txBadSeq'))) {
+        isBadSeq = true;
+      }
+
+      if (isBadSeq && retryCount < 3) {
+        emitAudit({ txHash: sendResult.hash ?? null, result: 'ERROR', errorCode: 'txBadSeq' });
+        logger.warn({ retryCount }, 'txBAD_SEQ encountered, retrying transaction');
+        return _simulateAndSubmit(operation, signer, retryCount + 1);
+      }
+      emitAudit({ txHash: sendResult.hash ?? null, result: 'ERROR', errorCode: 'submit_failed' });
+      throw new TransactionFailedError(`Transaction failed: ${JSON.stringify(sendResult.errorResult || sendResult)}`, sendResult.hash, sendResult.errorResult || sendResult);
+    }
+
+    const txHash = sendResult.hash;
+    trackPendingTransaction(txHash, operation);
+
+    logger.debug({ hash: txHash }, 'Submitted Soroban transaction');
+
+    let getResult;
+    for (let i = 0; i < 20; i++) {
+      const txStart = Date.now();
+      getResult = await server.getTransaction(sendResult.hash);
+      logRpcCall('getTransaction', Date.now() - txStart);
+      if (getResult.status !== 'NOT_FOUND') break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    if (!getResult || getResult.status === 'NOT_FOUND') {
+      // Leave in pendingTransactions — the tx may still confirm on-chain
+      emitAudit({ txHash, result: 'TIMEOUT' });
+      throw new TransactionTimeoutError(`Transaction not confirmed after polling: ${sendResult.hash}`, sendResult.hash);
+    }
+
+    // Transaction confirmed (SUCCESS or FAILED) — stop tracking
+    removePendingTransaction(txHash);
+
+    if (getResult.status === 'FAILED') {
+      emitAudit({ txHash, result: 'FAILED' });
+      throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, sendResult.hash, getResult);
+    }
+
+    emitAudit({ txHash, result: 'SUCCESS' });
+
+    if (getResult.returnValue) {
+      try {
+        getResult.nativeReturnValue = scValToNative(getResult.returnValue);
+      } catch (err) {
+        throw new ReturnValueParseError(`Transaction succeeded but return value could not be parsed: ${sendResult.hash}`, sendResult.hash, err);
       }
     }
-    if (!isBadSeq && (JSON.stringify(sendResult).includes('txBAD_SEQ') || JSON.stringify(sendResult).includes('txBadSeq'))) {
-      isBadSeq = true;
-    }
 
-    if (isBadSeq && retryCount < 3) {
-      logger.warn({ retryCount }, 'txBAD_SEQ encountered, retrying transaction');
-      return _simulateAndSubmit(operation, signer, retryCount + 1);
-    }
-    throw new TransactionFailedError(`Transaction failed: ${JSON.stringify(sendResult.errorResult || sendResult)}`, sendResult.hash, sendResult.errorResult || sendResult);
+    // Optimistic increment on success
+    currentSeqNum += 1n;
+
+    return getResult;
+  } catch (err) {
+    // Network failure, timeout, parse error — still one record per signed tx.
+    emitAudit({ result: 'ERROR', errorCode: err?.code ?? err?.name ?? 'error' });
+    throw err;
   }
-
-  const txHash = sendResult.hash;
-  trackPendingTransaction(txHash, operation);
-
-  logger.debug({ hash: txHash }, 'Submitted Soroban transaction');
-
-  let getResult;
-  for (let i = 0; i < 20; i++) {
-    const txStart = Date.now();
-    getResult = await server.getTransaction(sendResult.hash);
-    logRpcCall('getTransaction', Date.now() - txStart);
-    if (getResult.status !== 'NOT_FOUND') break;
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-
-  if (!getResult || getResult.status === 'NOT_FOUND') {
-    // Leave in pendingTransactions — the tx may still confirm on-chain
-    throw new TransactionTimeoutError(`Transaction not confirmed after polling: ${sendResult.hash}`, sendResult.hash);
-  }
-
-  // Transaction confirmed (SUCCESS or FAILED) — stop tracking
-  removePendingTransaction(txHash);
-
-  if (getResult.status === 'FAILED') {
-    throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, sendResult.hash, getResult);
-  }
-
-  if (getResult.returnValue) {
-    try {
-      getResult.nativeReturnValue = scValToNative(getResult.returnValue);
-    } catch (err) {
-      throw new ReturnValueParseError(`Transaction succeeded but return value could not be parsed: ${sendResult.hash}`, sendResult.hash, err);
-    }
-  }
-
-  // Optimistic increment on success
-  currentSeqNum += 1n;
-
-  return getResult;
 }
 
 export function simulateAndSubmit(operation, signer) {
@@ -1141,51 +1166,73 @@ async function submitSignedTx(signedXdr) {
   const tx = new Transaction(signedXdr, passphrase);
   tx.sign(keypair);
 
-  const sendStart = Date.now();
-  const sendResult = await server.sendTransaction(tx);
-  logRpcCall('sendTransaction', Date.now() - sendStart);
-  if (sendResult.status === 'ERROR') {
-    throw new TransactionFailedError(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`, sendResult.hash, sendResult.errorResult);
-  }
-
-  const signedTxHash = sendResult.hash;
-  trackPendingTransaction(signedTxHash, 'signed-transaction');
-
-  logger.debug({ hash: signedTxHash }, 'Submitted signed Soroban transaction');
-
-  let getResult;
-  for (let i = 0; i < 20; i++) {
-    const txStart = Date.now();
-    getResult = await server.getTransaction(sendResult.hash);
-    logRpcCall('getTransaction', Date.now() - txStart);
-    if (getResult.status !== 'NOT_FOUND') break;
-    await new Promise((r) => setTimeout(r, 1500));
-  }
-
-  if (!getResult || getResult.status === 'NOT_FOUND') {
-    throw new TransactionTimeoutError(`Transaction not confirmed: ${sendResult.hash}`, sendResult.hash);
-  }
-
-  removePendingTransaction(signedTxHash);
-
-  if (getResult.status === 'FAILED') {
-    throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, sendResult.hash, getResult);
-  }
-
-  let nativeReturnValue;
-  if (getResult.returnValue) {
-    try {
-      nativeReturnValue = scValToNative(getResult.returnValue);
-    } catch (err) {
-      throw new ReturnValueParseError(`Transaction succeeded but return value could not be parsed: ${sendResult.hash}`, sendResult.hash, err);
-    }
-  }
-
-  return {
-    hash: sendResult.hash,
-    returnValue: getResult.returnValue ?? null,
-    nativeReturnValue,
+  // The server co-signs this wallet-signed transaction with its custodied key,
+  // so it is audited too. `actor` is the transaction source; the party the call
+  // acts for (agent/provider address) is captured in the invocation args.
+  const auditBase = { actor: tx.source, ...extractInvocation(tx.operations?.[0]) };
+  const signedAt = Date.now();
+  let audited = false;
+  const emitAudit = (fields) => {
+    if (audited) return;
+    audited = true;
+    recordOnChainWrite({ ...auditBase, latencyMs: Date.now() - signedAt, ...fields });
   };
+
+  try {
+    const sendStart = Date.now();
+    const sendResult = await server.sendTransaction(tx);
+    logRpcCall('sendTransaction', Date.now() - sendStart);
+    if (sendResult.status === 'ERROR') {
+      emitAudit({ txHash: sendResult.hash ?? null, result: 'ERROR', errorCode: 'submit_failed' });
+      throw new TransactionFailedError(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`, sendResult.hash, sendResult.errorResult);
+    }
+
+    const signedTxHash = sendResult.hash;
+    trackPendingTransaction(signedTxHash, 'signed-transaction');
+
+    logger.debug({ hash: signedTxHash }, 'Submitted signed Soroban transaction');
+
+    let getResult;
+    for (let i = 0; i < 20; i++) {
+      const txStart = Date.now();
+      getResult = await server.getTransaction(sendResult.hash);
+      logRpcCall('getTransaction', Date.now() - txStart);
+      if (getResult.status !== 'NOT_FOUND') break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    if (!getResult || getResult.status === 'NOT_FOUND') {
+      emitAudit({ txHash: signedTxHash, result: 'TIMEOUT' });
+      throw new TransactionTimeoutError(`Transaction not confirmed: ${sendResult.hash}`, sendResult.hash);
+    }
+
+    removePendingTransaction(signedTxHash);
+
+    if (getResult.status === 'FAILED') {
+      emitAudit({ txHash: signedTxHash, result: 'FAILED' });
+      throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, sendResult.hash, getResult);
+    }
+
+    emitAudit({ txHash: signedTxHash, result: 'SUCCESS' });
+
+    let nativeReturnValue;
+    if (getResult.returnValue) {
+      try {
+        nativeReturnValue = scValToNative(getResult.returnValue);
+      } catch (err) {
+        throw new ReturnValueParseError(`Transaction succeeded but return value could not be parsed: ${sendResult.hash}`, sendResult.hash, err);
+      }
+    }
+
+    return {
+      hash: sendResult.hash,
+      returnValue: getResult.returnValue ?? null,
+      nativeReturnValue,
+    };
+  } catch (err) {
+    emitAudit({ result: 'ERROR', errorCode: err?.code ?? err?.name ?? 'error' });
+    throw err;
+  }
 }
 
 /**

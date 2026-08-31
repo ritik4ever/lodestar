@@ -12,6 +12,7 @@ vi.mock('../config.js', () => ({
     nodeEnv: 'test',
     port: 3001,
     logLevel: 'silent',
+    audit: { enabled: false, file: '', level: 'silent' },
   },
 }));
 
@@ -41,6 +42,7 @@ vi.mock('node:fs', () => ({
 
 import sdkPkg from '@stellar/stellar-sdk';
 import * as contractLib from './contract.js';
+import { __setAuditSinkForTest, extractInvocation } from './auditLog.js';
 
 const { StrKey } = sdkPkg;
 const VALID_CONTRACT_ID = StrKey.encodeContract(Buffer.alloc(32));
@@ -602,6 +604,112 @@ describe('simulateAndSubmit transaction polling', () => {
       code: 'RETURN_VALUE_PARSE_FAILED',
       hash: 'txhash123',
     });
+  });
+});
+
+describe('on-chain write audit log', () => {
+  let contract;
+  let records;
+
+  beforeEach(() => {
+    resetMockServer();
+    contractLib.resetRpcMetrics();
+    contractLib.__resetPendingTransactions();
+    records = [];
+    __setAuditSinkForTest((record) => records.push(record));
+    contract = new sdkPkg.Contract(VALID_CONTRACT_ID);
+    mockGetAccount.mockResolvedValue({ sequence: '1' });
+    mockSimulateTransaction.mockResolvedValue({ result: { retval: sdkPkg.xdr.ScVal.scvVoid() } });
+    contractLib.__setAssembleTransactionForTest((tx) => ({ build: () => tx }));
+  });
+
+  afterEach(() => {
+    __setAuditSinkForTest();
+    contractLib.__setAssembleTransactionForTest();
+    contractLib.__resetPendingTransactions();
+  });
+
+  it('emits exactly one SUCCESS record per signed transaction, queryable by tx hash', async () => {
+    mockSendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'audit-success-hash' });
+    mockGetTransaction.mockResolvedValue({ status: 'SUCCESS', returnValue: sdkPkg.xdr.ScVal.scvVoid() });
+
+    await contractLib.simulateAndSubmit(
+      contract.call('get_service', sdkPkg.nativeToScVal(7n, { type: 'u64' })),
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      event: 'onchain_write',
+      fn: 'get_service',
+      result: 'SUCCESS',
+      txHash: 'audit-success-hash',
+      contractId: VALID_CONTRACT_ID,
+    });
+    expect(records[0].actor).toMatch(/^G[A-Z2-7]{55}$/);
+    expect(records[0].args).toEqual(['7']);
+    expect(records[0].ts).toEqual(expect.any(String));
+  });
+
+  it('records a FAILED result exactly once', async () => {
+    mockSendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'audit-failed-hash' });
+    mockGetTransaction.mockResolvedValue({ status: 'FAILED', resultXdr: 'raw-failure' });
+
+    await expect(
+      contractLib.simulateAndSubmit(contract.call('get_service_count')),
+    ).rejects.toThrow();
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ result: 'FAILED', txHash: 'audit-failed-hash' });
+  });
+
+  it('records an ERROR result when the submit is rejected', async () => {
+    mockSendTransaction.mockResolvedValue({ status: 'ERROR', errorResult: 'nope', hash: 'audit-error-hash' });
+
+    await expect(
+      contractLib.simulateAndSubmit(contract.call('get_service_count')),
+    ).rejects.toThrow();
+
+    expect(records).toHaveLength(1);
+    expect(records[0].result).toBe('ERROR');
+    expect(records[0].errorCode).toBe('submit_failed');
+  });
+
+  it('never lets a secret-shaped value reach a record', async () => {
+    mockSendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'audit-scrub-hash' });
+    mockGetTransaction.mockResolvedValue({ status: 'SUCCESS', returnValue: sdkPkg.xdr.ScVal.scvVoid() });
+    const secret = 'SDY7R6HC2UK4D4CWWBKZBJTE6FLY5QHGQCK2U6U3R3KASMW5OPWMBDO2';
+
+    await contractLib.simulateAndSubmit(
+      contract.call('register_service', sdkPkg.nativeToScVal(secret, { type: 'string' })),
+    );
+
+    expect(records).toHaveLength(1);
+    expect(JSON.stringify(records[0])).not.toContain(secret);
+    expect(records[0].args).toEqual(['[REDACTED]']);
+  });
+});
+
+describe('extractInvocation', () => {
+  const contractId = sdkPkg.StrKey.encodeContract(Buffer.alloc(32));
+
+  it('decodes fn name, contract id and args from a Contract#call operation', () => {
+    const contract = new sdkPkg.Contract(contractId);
+    const op = contract.call(
+      'update_reputation',
+      sdkPkg.nativeToScVal(3n, { type: 'u64' }),
+      sdkPkg.nativeToScVal(true, { type: 'bool' }),
+    );
+
+    expect(extractInvocation(op)).toEqual({
+      fn: 'update_reputation',
+      contractId,
+      args: ['3', true],
+    });
+  });
+
+  it('returns a safe default for an unrecognised operation', () => {
+    expect(extractInvocation({})).toEqual({ fn: 'unknown', contractId: null, args: [] });
+    expect(extractInvocation(null)).toEqual({ fn: 'unknown', contractId: null, args: [] });
   });
 });
 
