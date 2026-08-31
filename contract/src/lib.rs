@@ -4,7 +4,26 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
-const MAX_TTL: u32 = 3110400;
+// Maximum TTL for persistent storage entries: 3_110_400 ledgers ≈ 180 days at
+// 5 s per ledger (the current Stellar mainnet target). This is the ceiling
+// passed as the `extend_to` argument of `extend_ttl` — entries will never be
+// bumped beyond this value.
+const MAX_TTL: u32 = 3_110_400;
+
+// Low-watermark threshold for TTL bumps: 1_555_200 ledgers ≈ 90 days.
+//
+// Rationale: extending TTL to MAX_TTL on *every* write charges the caller for
+// the full 180-day window even when the entry's TTL is, say, 179 days and
+// almost nothing would actually decay.  By passing LOW_WATERMARK as the
+// `threshold` argument of `extend_ttl`, the host only performs (and charges
+// for) the bump when the remaining TTL has genuinely decayed below 90 days.
+// This halves the worst-case rent cost on the hot `update_reputation` path,
+// where two entries (Service and LastVote) are bumped on every vote.
+//
+// Choosing half of MAX_TTL keeps the safety margin generous: an entry that
+// hasn't been touched for 90 days is still 90 days away from archival, which
+// is ample time for the next interaction to refresh it.
+const LOW_WATERMARK: u32 = 1_555_200;
 
 // Minimum number of ledgers that must elapse before the same agent may vote on
 // the same service again. ~1 hour at 5 s/ledger. This caps how fast any single
@@ -88,7 +107,7 @@ impl LodestarRegistry {
             .set(&DataKey::AgentsContract, &agents_contract);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::AgentsContract, MAX_TTL, MAX_TTL);
+            .extend_ttl(&DataKey::AgentsContract, LOW_WATERMARK, MAX_TTL);
     }
 
     /// Address of the LodestarAgents contract this registry was deployed against.
@@ -165,12 +184,12 @@ impl LodestarRegistry {
             .set(&DataKey::Service(new_id), &entry);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::Service(new_id), MAX_TTL, MAX_TTL);
+            .extend_ttl(&DataKey::Service(new_id), LOW_WATERMARK, MAX_TTL);
 
         env.storage().persistent().set(&DataKey::Counter, &new_id);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::Counter, MAX_TTL, MAX_TTL);
+            .extend_ttl(&DataKey::Counter, LOW_WATERMARK, MAX_TTL);
 
         let mut ids: Vec<u64> = env
             .storage()
@@ -181,7 +200,7 @@ impl LodestarRegistry {
         env.storage().persistent().set(&DataKey::ServiceIds, &ids);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::ServiceIds, MAX_TTL, MAX_TTL);
+            .extend_ttl(&DataKey::ServiceIds, LOW_WATERMARK, MAX_TTL);
 
         let mut cat_ids: Vec<u64> = env
             .storage()
@@ -194,7 +213,7 @@ impl LodestarRegistry {
             .set(&DataKey::ServiceIdsByCategory(cat.clone()), &cat_ids);
         env.storage().persistent().extend_ttl(
             &DataKey::ServiceIdsByCategory(cat),
-            MAX_TTL,
+            LOW_WATERMARK,
             MAX_TTL,
         );
 
@@ -366,12 +385,12 @@ impl LodestarRegistry {
             .set(&DataKey::Service(id), &entry);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::Service(id), MAX_TTL, MAX_TTL);
+            .extend_ttl(&DataKey::Service(id), LOW_WATERMARK, MAX_TTL);
 
         env.storage().persistent().set(&vote_key, &now);
         env.storage()
             .persistent()
-            .extend_ttl(&vote_key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&vote_key, LOW_WATERMARK, MAX_TTL);
     }
 
     pub fn deactivate_service(env: Env, provider: Address, id: u64) {
@@ -394,7 +413,7 @@ impl LodestarRegistry {
             .set(&DataKey::Service(id), &entry);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::Service(id), MAX_TTL, MAX_TTL);
+            .extend_ttl(&DataKey::Service(id), LOW_WATERMARK, MAX_TTL);
 
         // Remove from category index
         let cat_key = DataKey::ServiceIdsByCategory(entry.category.clone());
@@ -412,7 +431,7 @@ impl LodestarRegistry {
         env.storage().persistent().set(&cat_key, &updated);
         env.storage()
             .persistent()
-            .extend_ttl(&cat_key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&cat_key, LOW_WATERMARK, MAX_TTL);
     }
 
     pub fn get_service_count(env: Env) -> u64 {

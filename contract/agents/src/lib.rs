@@ -6,7 +6,24 @@ use soroban_sdk::{
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const MAX_TTL: u32 = 100_000_000; // extended for tests/CI stability
+// Maximum TTL for persistent storage entries. Set to 100_000_000 ledgers for
+// test/CI stability; on a live network this should mirror the registry value
+// (3_110_400 ≈ 180 days at 5 s/ledger).
+const MAX_TTL: u32 = 100_000_000;
+
+// Low-watermark threshold for TTL bumps: half of MAX_TTL.
+//
+// Rationale: passing LOW_WATERMARK as the `threshold` argument of `extend_ttl`
+// means the host only charges for the bump when the remaining TTL has actually
+// decayed below this value.  On the hot `record_payment` path (two entries
+// bumped per call: Agent + Policy), this can halve the rent cost compared to
+// the previous unconditional MAX_TTL, MAX_TTL bump.
+//
+// We keep it at ½ × MAX_TTL so the safety margin is symmetric: an entry
+// that has not been touched for half the max window is still half the window
+// away from archival, giving enough runway for the next interaction to refresh it.
+const LOW_WATERMARK: u32 = 50_000_000;
+
 #[cfg(not(test))]
 const DAY_LEDGERS: u64 = 17_280; // 86400 / 5
 #[cfg(test)]
@@ -138,7 +155,7 @@ impl LodestarAgents {
             .set(&DataKey::RegistryContract, &registry_contract);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::RegistryContract, MAX_TTL, MAX_TTL);
+            .extend_ttl(&DataKey::RegistryContract, LOW_WATERMARK, MAX_TTL);
     }
 
     /// Deploy-time setup: store the admin address for privileged operations.
@@ -146,7 +163,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::Admin, MAX_TTL, MAX_TTL);
+            .extend_ttl(&DataKey::Admin, LOW_WATERMARK, MAX_TTL);
     }
 
     // Register a new agent.
@@ -185,7 +202,7 @@ impl LodestarAgents {
         };
 
         env.storage().persistent().set(&key, &entry);
-        env.storage().persistent().extend_ttl(&key, MAX_TTL, MAX_TTL);
+        env.storage().persistent().extend_ttl(&key, LOW_WATERMARK, MAX_TTL);
 
         // Update agent IDs list
         let ids_key = DataKey::AgentIds;
@@ -198,7 +215,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&ids_key, &ids);
         env.storage()
             .persistent()
-            .extend_ttl(&ids_key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&ids_key, LOW_WATERMARK, MAX_TTL);
 
         // Update count
         let count_key = DataKey::AgentCount;
@@ -211,7 +228,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&count_key, &new_count);
         env.storage()
             .persistent()
-            .extend_ttl(&count_key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&count_key, LOW_WATERMARK, MAX_TTL);
 
         // Default spending policy
         let policy = SpendingPolicy {
@@ -227,7 +244,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&policy_key, &policy);
         env.storage()
             .persistent()
-            .extend_ttl(&policy_key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&policy_key, LOW_WATERMARK, MAX_TTL);
 
         new_count
     }
@@ -371,7 +388,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&agent_key, &agent);
         env.storage()
             .persistent()
-            .extend_ttl(&agent_key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&agent_key, LOW_WATERMARK, MAX_TTL);
 
         // Update daily spend in policy using helper
         let updated_policy = if success {
@@ -389,7 +406,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&policy_key, &updated_policy);
         env.storage()
             .persistent()
-            .extend_ttl(&policy_key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&policy_key, LOW_WATERMARK, MAX_TTL);
     }
 
     // Flag an agent (admin-only)
@@ -420,7 +437,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&key, &agent);
         env.storage()
             .persistent()
-            .extend_ttl(&key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&key, LOW_WATERMARK, MAX_TTL);
     }
 
     // Deactivate agent (owner only)
@@ -442,7 +459,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&key, &agent);
         env.storage()
             .persistent()
-            .extend_ttl(&key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&key, LOW_WATERMARK, MAX_TTL);
     }
 
     // Admin deactivate agent (can deactivate any agent regardless of ownership)
@@ -470,7 +487,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&key, &agent);
         env.storage()
             .persistent()
-            .extend_ttl(&key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&key, LOW_WATERMARK, MAX_TTL);
     }
 
     // Get the current admin address
@@ -500,7 +517,7 @@ impl LodestarAgents {
             .set(&DataKey::Admin, &new_admin);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::Admin, MAX_TTL, MAX_TTL);
+            .extend_ttl(&DataKey::Admin, LOW_WATERMARK, MAX_TTL);
     }
 
     // List agents (paginated by limit)
@@ -608,7 +625,7 @@ impl LodestarAgents {
         env.storage().persistent().set(&policy_key, &policy);
         env.storage()
             .persistent()
-            .extend_ttl(&policy_key, MAX_TTL, MAX_TTL);
+            .extend_ttl(&policy_key, LOW_WATERMARK, MAX_TTL);
     }
 
     // Get the current scoring configuration constants
