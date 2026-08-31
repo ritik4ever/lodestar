@@ -26,13 +26,22 @@ interface Props {
   onReputationChange?: (id: number, newRep: number) => void;
 }
 
+// Tracks an in-flight optimistic vote so the UI can reconcile with the on-chain
+// result or roll back on failure (#837). `previous` is the value shown before
+// the vote, used to restore it when the request fails.
+interface PendingVote {
+  positive: boolean;
+  previous: number;
+}
+
 export default function ServiceCard({ service, onReputationChange }: Props) {
   const [copied, setCopied] = useState(false);
   const [reputation, setReputation] = useState(service.reputation);
-  const [voting, setVoting] = useState(false);
+  const [pendingVote, setPendingVote] = useState<PendingVote | null>(null);
   const [pendingTx, setPendingTx] = useState<string | null>(null);
   const [voteError, setVoteError] = useState('');
   const category = getCategoryMeta(service.category);
+  const voting = pendingVote !== null;
 
   function copyEndpoint() {
     navigator.clipboard.writeText(service.endpoint);
@@ -42,22 +51,27 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
 
   async function vote(positive: boolean) {
     if (voting) return;
-    setVoting(true);
+    // Apply the vote optimistically so the card responds instantly instead of
+    // blocking on the seconds-long on-chain confirmation (#837).
+    const previous = reputation;
+    setPendingVote({ positive, previous });
+    setReputation(previous + (positive ? 1 : -1));
     setVoteError('');
     setPendingTx(null);
     try {
       const res = await submitReputation(service.id, positive);
-      if (res.txHash) {
-        setPendingTx(res.txHash);
-        // Show pending state briefly before updating reputation
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
+      // Reconcile with the real on-chain result.
+      if (res.txHash) setPendingTx(res.txHash);
       setReputation(res.newReputation);
       onReputationChange?.(service.id, res.newReputation);
     } catch (err) {
-      setVoteError(err instanceof Error ? err.message : 'Vote failed');
+      // Roll the optimistic update back and explain why the vote was not kept.
+      setReputation(previous);
+      setVoteError(
+        err instanceof Error ? err.message : 'Vote failed — reputation unchanged.'
+      );
     } finally {
-      setVoting(false);
+      setPendingVote(null);
     }
   }
 
@@ -104,16 +118,23 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
           <button
             onClick={() => vote(false)}
             disabled={voting}
+            aria-label="Vote down"
+            aria-busy={voting}
             className="text-secondary hover:text-error transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             −
           </button>
-          <span className={`mono text-xs font-medium ${reputation > 0 ? 'text-success' : reputation < 0 ? 'text-error' : 'text-secondary'}`}>
+          <span
+            aria-busy={voting}
+            className={`mono text-xs font-medium ${voting ? 'opacity-60 animate-pulse' : ''} ${reputation > 0 ? 'text-success' : reputation < 0 ? 'text-error' : 'text-secondary'}`}
+          >
             {reputation > 0 ? '+' : ''}{reputation}
           </span>
           <button
             onClick={() => vote(true)}
             disabled={voting}
+            aria-label="Vote up"
+            aria-busy={voting}
             className="text-secondary hover:text-success transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             +
@@ -121,18 +142,25 @@ export default function ServiceCard({ service, onReputationChange }: Props) {
         </div>
       </div>
 
-      {pendingTx && (
-        <div className="flex items-center gap-2 text-xs text-secondary bg-background rounded-lg px-3 py-2 border border-border">
+      {voting && (
+        <div
+          role="status"
+          className="flex items-center gap-2 text-xs text-secondary bg-background rounded-lg px-3 py-2 border border-border"
+        >
           <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full spinner" />
-          <span className="truncate flex-1">Confirming vote...</span>
-          <a
-            href={`${EXPLORER_URL}/tx/${pendingTx}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-accent hover:underline shrink-0"
-          >
-            View
-          </a>
+          <span className="truncate flex-1">
+            Casting {pendingVote?.positive ? 'up' : 'down'} vote on-chain...
+          </span>
+          {pendingTx && (
+            <a
+              href={`${EXPLORER_URL}/tx/${pendingTx}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:underline shrink-0"
+            >
+              View
+            </a>
+          )}
         </div>
       )}
 
