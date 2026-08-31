@@ -1,3 +1,5 @@
+import config from '../config.js';
+
 // Reputation history — in-memory store.
 // Kept dependency-free so it's unit-testable.
 //
@@ -10,11 +12,11 @@
 //
 // The policy has three tiers, applied newest-first:
 //
-//   1. RAW      — every event is kept for RAW_WINDOW_MS (7 days).
+//   1. RAW      — every event is kept for RAW_WINDOW_MS.
 //   2. COMPACT  — beyond that, events are folded into one bucket per
-//                 COMPACTION_BUCKET_MS (1 day), keeping the net delta and the
-//                 closing value of each bucket.
-//   3. DROP     — beyond RETENTION_WINDOW_MS (90 days), points are discarded.
+//                 COMPACTION_BUCKET_MS, keeping the net delta and the closing
+//                 value of each bucket.
+//   3. DROP     — beyond RETENTION_WINDOW_MS, points are discarded.
 //
 // A per-service hard cap (MAX_POINTS_PER_SERVICE) bounds memory even for a
 // service that somehow produces enormous churn inside the raw window.
@@ -22,16 +24,16 @@
 const reputationHistory = new Map();
 
 /** Events newer than this keep full per-event resolution. */
-export const RAW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const RAW_WINDOW_MS = config.reputationHistory.rawWindowMs;
 
 /** Older events are aggregated into buckets of this size. */
-export const COMPACTION_BUCKET_MS = 24 * 60 * 60 * 1000;
+export const COMPACTION_BUCKET_MS = config.reputationHistory.compactionBucketMs;
 
 /** Nothing older than this is retained at any resolution. */
-export const RETENTION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+export const RETENTION_WINDOW_MS = config.reputationHistory.retentionWindowMs;
 
 /** Absolute per-service ceiling, a backstop against pathological churn. */
-export const MAX_POINTS_PER_SERVICE = 500;
+export const MAX_POINTS_PER_SERVICE = config.reputationHistory.maxPointsPerService;
 
 /**
  * Record a reputation change for a service.

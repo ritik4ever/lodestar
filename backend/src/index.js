@@ -41,19 +41,19 @@ if (process.argv.includes("--print-config")) {
         trustProxy: config.trustProxy,
         rateLimit: config.rateLimit,
         demoRun: config.demoRun,
-      },
-      null,
-      2,
-    ),
-  );
+      reputationHistory: config.reputationHistory,
+    },
+    null,
+    2,
+  ),
+);
   process.exit(0);
 }
 
 validateConfig(logger);
 
 logger.info({ corsOrigin: config.corsOrigin }, "Resolved CORS origin allowlist");
-
-const app = express();
+logger.info({ reputationHistory: config.reputationHistory }, "Effective reputation history retention policy");
 
 // Trust the configured number of proxy hops so req.ip reflects the real client
 // (via X-Forwarded-For) behind a reverse proxy — required for correct IP-based

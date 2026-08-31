@@ -136,6 +136,32 @@ const config = Object.freeze({
     pollMaxDelayMs: parsePositiveInt(process.env.DEMO_RUN_POLL_MAX_DELAY_MS, 2_000, 'DEMO_RUN_POLL_MAX_DELAY_MS'),
   },
 
+  // Reputation history retention and compaction defaults. Operators can tune
+  // retention windows, compaction cadence, and the per-service safety cap via
+  // environment variables without a code change or redeploy.
+  reputationHistory: {
+    rawWindowMs: parsePositiveInt(
+      process.env.REPUTATION_HISTORY_RAW_WINDOW_MS,
+      7 * 24 * 60 * 60 * 1000,
+      'REPUTATION_HISTORY_RAW_WINDOW_MS',
+    ),
+    compactionBucketMs: parsePositiveInt(
+      process.env.REPUTATION_HISTORY_COMPACTION_BUCKET_MS,
+      24 * 60 * 60 * 1000,
+      'REPUTATION_HISTORY_COMPACTION_BUCKET_MS',
+    ),
+    retentionWindowMs: parsePositiveInt(
+      process.env.REPUTATION_HISTORY_RETENTION_WINDOW_MS,
+      90 * 24 * 60 * 60 * 1000,
+      'REPUTATION_HISTORY_RETENTION_WINDOW_MS',
+    ),
+    maxPointsPerService: parsePositiveInt(
+      process.env.REPUTATION_HISTORY_MAX_POINTS_PER_SERVICE,
+      500,
+      'REPUTATION_HISTORY_MAX_POINTS_PER_SERVICE',
+    ),
+  },
+
   // Graceful shutdown: how long (ms) to wait for the submit queue to drain
   // and pending transaction checks before force-exiting. Default is just over
   // the max polling window (30 s) so an in-flight poll can finish.
