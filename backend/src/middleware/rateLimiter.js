@@ -18,6 +18,10 @@ if (config.redisUrl) {
  *
  * @param {number} [max]      Max requests allowed per window.
  * @param {number} [windowMs] Window length in milliseconds.
+ * @returns {import('express').RequestHandler} Express middleware safe to
+ *   share across concurrent requests. Redis-backed counters are atomic.
+ * @throws {TypeError} If the supplied limit or window is not accepted by
+ *   express-rate-limit.
  */
 export function writeRateLimiter(
   max = config.rateLimit.max,
