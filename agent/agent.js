@@ -86,6 +86,13 @@ const logger = pino({
   transport: { target: 'pino-pretty', options: { colorize: true } },
 });
 
+// Run-scoped logging. `main()` swaps this for a child logger bound to a fresh
+// run id, so every line emitted during a run carries the same `runId` and the
+// whole run can be reconstructed from the log alone (#825). Before a run starts
+// (module load, boot errors) it falls back to the base logger, so nothing is
+// ever dropped.
+let runLogger = logger;
+
 const FETCH_TIMEOUT_MS = Number.isFinite(Number(process.env.AGENT_FETCH_TIMEOUT_MS))
   ? Math.max(1, Number(process.env.AGENT_FETCH_TIMEOUT_MS))
   : 5000;
@@ -112,6 +119,7 @@ export const EVENT = {
   SPEND_CHECK_BLOCKED: 'spend_check_blocked',
   PAYMENT_SUCCESS:     'payment_success',
   PAYMENT_FAILED:      'payment_failed',
+  REPUTATION_SUBMITTED: 'reputation_submitted',
   SCORE_UPDATED:       'score_updated',
   AGENT_COMPLETE:      'agent_complete',
 };
@@ -124,7 +132,7 @@ export async function ensureRegistered() {
   try {
     const res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/agents/${AGENT_ADDRESS}`);
     if (res.status === 503) {
-      logger.info(
+      runLogger.info(
         { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, scoringEnabled: false },
         'Agents contract not deployed — scoring disabled'
       );
@@ -138,14 +146,14 @@ export async function ensureRegistered() {
       const dailyLimitUsdc = policy
         ? stroopsToUsdcDisplay(policy.max_per_day_stroops)
         : null;
-      logger.info(
+      runLogger.info(
         { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, score: agent.score, dailyLimitUsdc, scoringEnabled: true },
         'Already registered'
       );
       return true;
     }
     if (res.status === 404) {
-      logger.info(
+      runLogger.info(
         { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS },
         'Not registered — registering now…'
       );
@@ -163,21 +171,21 @@ export async function ensureRegistered() {
       });
       if (regRes.ok) {
         currentScore = 100;
-        logger.info(
+        runLogger.info(
           { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, score: 100, scoringEnabled: true },
           'Registered — starting score: 100'
         );
         return true;
       }
       const err = await regRes.json().catch(() => ({}));
-      logger.warn(
+      runLogger.warn(
         { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, scoringEnabled: false, err },
         'Registration failed — scoring disabled'
       );
       return false;
     }
   } catch (err) {
-    logger.warn(
+    runLogger.warn(
       { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, scoringEnabled: false, err },
       'Could not reach agents API — scoring disabled'
     );
@@ -217,7 +225,7 @@ async function recordOutcome(amountUsdc, success, serviceId) {
       const data = await res.json();
       const scoreBefore = currentScore;
       currentScore = data.newScore;
-      logger.info(
+      runLogger.info(
         { event: EVENT.SCORE_UPDATED, agentAddress: AGENT_ADDRESS, scoreBefore, scoreAfter: currentScore },
         'Score updated'
       );
@@ -232,7 +240,7 @@ async function recordOutcome(amountUsdc, success, serviceId) {
 const httpClient = buildHttpClient();
 
 export function dispose() {
-  logger.info('Shutting down Lodestar Agent');
+  runLogger.info('Shutting down Lodestar Agent');
 }
 
 // USDC <-> stroop conversion comes from the shared package so the agent and
@@ -278,19 +286,52 @@ async function fetchServices(category) {
   return body.services ?? [];
 }
 
-async function submitReputation(id, positive) {
+/**
+ * Vote on a service's reputation (best-effort). Emits a structured
+ * `reputation_submitted` event at every decision point with a stable field set
+ * (serviceId, priceUsdc, positive, outcome) so a run can be reconstructed and
+ * aggregated from the log alone (#825). A failed vote must never abort the run.
+ *
+ * @param {string|number} id - service id
+ * @param {boolean} positive - true = upvote, false = downvote
+ * @param {string} [amountUsdc] - service price in USDC, matching payment events
+ */
+async function submitReputation(id, positive, amountUsdc) {
+  const base = {
+    event: EVENT.REPUTATION_SUBMITTED,
+    serviceId: id,
+    priceUsdc: amountUsdc ?? null,
+    positive,
+  };
+
+  let res;
   try {
-    const res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/reputation/${id}`, {
+    res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/reputation/${id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ positive, agent: AGENT_ADDRESS }),
     });
-    if (!res.ok) {
-      logger.debug({ status: res.status }, 'Reputation vote not applied (best-effort)');
-    }
-  } catch {
+  } catch (err) {
     // Intentionally best-effort — a failed vote must not abort the agent run.
+    runLogger.error(
+      { ...base, outcome: 'failed', err },
+      'Reputation vote failed — not applied (best-effort)'
+    );
+    return;
   }
+
+  if (!res.ok) {
+    runLogger.warn(
+      { ...base, outcome: 'not_applied', httpStatus: res.status },
+      'Reputation vote rejected by server (best-effort)'
+    );
+    return;
+  }
+
+  runLogger.info(
+    { ...base, outcome: 'applied' },
+    'Reputation vote applied'
+  );
 }
 
 // Weighted random selection: higher reputation = proportionally more likely to be chosen.
@@ -316,12 +357,12 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
   const maxRetries    = parseInt(process.env.AGENT_MAX_SERVICE_RETRIES    ?? '3', 10);
 
   const taskStart = Date.now();
-  logger.info({ event: EVENT.TASK_START, category, agentAddress: AGENT_ADDRESS }, 'Task started');
+  runLogger.info({ event: EVENT.TASK_START, category, agentAddress: AGENT_ADDRESS }, 'Task started');
 
   const services = await fetchServices(category);
 
   if (!services.length) {
-    logger.error(
+    runLogger.error(
       { event: EVENT.TASK_START, category, servicesFound: 0 },
       'No services found for category'
     );
@@ -330,7 +371,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
 
   const eligible = services.filter(s => s.reputation >= minReputation);
   if (!eligible.length) {
-    logger.error(
+    runLogger.error(
       { event: EVENT.TASK_START, category, servicesFound: services.length, minReputation },
       'No services meet minimum reputation threshold'
     );
@@ -354,7 +395,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
 
     const selected = selectWeighted(available);
 
-    logger.info(
+    runLogger.info(
       {
         event: EVENT.SERVICE_SELECTED,
         category,
@@ -370,7 +411,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
     if (scoringEnabled) {
       const check = await checkSpend(selected.price_usdc, category);
       if (!check.allowed) {
-        logger.warn(
+        runLogger.warn(
           {
             event: EVENT.SPEND_CHECK_BLOCKED,
             category,
@@ -384,14 +425,14 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
         failed.add(selected.id);
         continue;
       }
-      logger.info(
+      runLogger.info(
         { event: EVENT.SPEND_CHECK_PASSED, category, serviceId: selected.id, serviceName: selected.name, priceUsdc: selected.price_usdc },
         'Spending policy check passed'
       );
     }
 
     const endpointUrl = buildUrl(selected.endpoint);
-    logger.debug(
+    runLogger.debug(
       { event: EVENT.TASK_START, category, serviceId: selected.id, endpointUrl },
       'Sending x402 payment on Stellar'
     );
@@ -402,7 +443,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
     try {
       response = await fetchWithTimeout(endpointUrl, { headers: paymentHeaders, keepalive: true });
     } catch (err) {
-      logger.error(
+      runLogger.error(
         {
           event: EVENT.PAYMENT_FAILED,
           category,
@@ -420,7 +461,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
     }
 
     if (!response.ok) {
-      logger.error(
+      runLogger.error(
         {
           event: EVENT.PAYMENT_FAILED,
           category,
@@ -434,7 +475,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
       );
       if (scoringEnabled) await recordOutcome(selected.price_usdc, false, selected.id);
       // Payment settled but service returned bad data — penalise service reputation.
-      await submitReputation(selected.id, false);
+      await submitReputation(selected.id, false, selected.price_usdc);
       failed.add(selected.id);
       continue;
     }
@@ -443,7 +484,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
     const scoreBefore = currentScore;
     if (scoringEnabled) await recordOutcome(selected.price_usdc, true, selected.id);
 
-    logger.info(
+    runLogger.info(
       {
         event: EVENT.PAYMENT_SUCCESS,
         category,
@@ -457,7 +498,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
       'Payment successful'
     );
 
-    await submitReputation(selected.id, true);
+    await submitReputation(selected.id, true, selected.price_usdc);
 
     return {
       success: true,
@@ -483,7 +524,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
   }
 
   const taskDurationMs = Date.now() - taskStart;
-  logger.error(
+  runLogger.error(
     { event: EVENT.PAYMENT_FAILED, category, servicesAttempted: failed.size, taskDurationMs },
     'All candidate services exhausted'
   );
@@ -508,14 +549,14 @@ export async function initiateShutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  logger.info(
+  runLogger.info(
     { event: 'shutdown_initiated', signal },
     `Graceful shutdown initiated (${signal}) — no new work will be started`
   );
 
   shutdownTimer = setTimeout(() => {
     const pendingCount = getPendingTransactionCount ? getPendingTransactionCount() : 0;
-    logger.warn(
+    runLogger.warn(
       { event: 'shutdown_timeout', pendingTransactions: pendingCount },
       `Shutdown timeout reached after ${SHUTDOWN_TIMEOUT_MS}ms — exiting`
     );
@@ -528,7 +569,7 @@ async function completeShutdown(success, unresolved) {
   if (shutdownTimer) clearTimeout(shutdownTimer);
 
   const finalScore = currentScore;
-  logger.info(
+  runLogger.info(
     {
       event: 'shutdown_complete',
       success,
@@ -546,8 +587,11 @@ async function completeShutdown(success, unresolved) {
 
 export async function main() {
   const runStart = Date.now();
-  logger.info(
-    { event: EVENT.AGENT_START, agentAddress: AGENT_ADDRESS, agentName: AGENT_NAME },
+  const runId = crypto.randomUUID();
+  // Bind the run id once per run so every subsequent log line is correlated.
+  runLogger = logger.child({ runId });
+  runLogger.info(
+    { event: EVENT.AGENT_START, runId, agentAddress: AGENT_ADDRESS, agentName: AGENT_NAME },
     'Lodestar Agent starting'
   );
 
@@ -567,7 +611,7 @@ export async function main() {
 
   for (const { category, buildUrl } of tasks) {
     if (shuttingDown) {
-      logger.warn({ event: 'shutdown_skip_task', category }, 'Skipping task due to shutdown');
+      runLogger.warn({ event: 'shutdown_skip_task', category }, 'Skipping task due to shutdown');
       failCount++;
       taskResults.push({ category, success: false, failureReason: 'skipped_due_to_shutdown' });
       continue;
@@ -595,7 +639,7 @@ export async function main() {
 
   const shutdownSuccess = failCount === 0 && !shuttingDown;
 
-  logger.info(
+  runLogger.info(
     {
       event: EVENT.AGENT_COMPLETE,
       agentAddress: AGENT_ADDRESS,
@@ -625,7 +669,7 @@ export async function main() {
       unresolvedPayments,
       shutdownInitiated: shuttingDown,
     }),
-    { logger },
+    { logger: runLogger },
   );
 
   if (shuttingDown) {
@@ -643,7 +687,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     await initiateShutdown('SIGINT');
   });
   main().catch((err) => {
-    logger.error({ err }, 'Agent crashed');
+    runLogger.error({ err }, 'Agent crashed');
     // A crash is still a run outcome — emit the artefact before exiting (#843).
     writeRunSummary(
       buildRunSummary({
@@ -653,7 +697,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         tasks: [],
         error: err,
       }),
-      { logger },
+      { logger: runLogger },
     );
     process.exit(1);
   });
