@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/stellar
+            contract/target
+            contract/agents/target
+          key: rust-${{ runner.os }}-${{ hashFiles('contract/Cargo.lock', 'contract/agents/Cargo.lock') }}
+          restore-keys: rust-${{ runner.os }}-
+
+      - name: Install system dependencies for stellar-cli
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libssl-dev libudev-dev
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli
+
+      - name: Build registry contract
+        working-directory: contract
+        run: stellar contract build
+
+      - name: Build agents contract
+        working-directory: contract/agents
+        run: stellar contract build
+
+      - name: Compute WASM hashes
+        id: hashes
+        run: |
+          REGISTRY=$(sha256sum contract/target/wasm32v1-none/release/lodestar_registry.wasm | awk '{print $1}')
+          AGENTS=$(sha256sum contract/agents/target/wasm32v1-none/release/lodestar_agents.wasm | awk '{print $1}')
+          echo "registry=$REGISTRY" >> "$GITHUB_OUTPUT"
+          echo "agents=$AGENTS" >> "$GITHUB_OUTPUT"
+
+      - name: Build release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the changelog section for this version
+          awk "/^## \[$VERSION\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md > release-notes.md
+          # Append contract hashes
+          cat >> release-notes.md << 'HEREDOC'
+
+          ## Contract hashes
+
+          | Contract | SHA-256 |
+          |----------|---------|
+          HEREDOC
+          echo "| lodestar-registry | \`${{ steps.hashes.outputs.registry }}\` |" >> release-notes.md
+          echo "| lodestar-agents   | \`${{ steps.hashes.outputs.agents }}\` |"   >> release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: release-notes.md
+          files: |
+            contract/target/wasm32v1-none/release/lodestar_registry.wasm
+            contract/agents/target/wasm32v1-none/release/lodestar_agents.wasm
