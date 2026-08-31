@@ -4,6 +4,10 @@ import { recordPollSample } from './pollMetrics.js';
  * Poll the activity feed with exponential backoff until a new entry with a
  * txHash appears, or the max wait budget is exhausted.
  *
+ * `getFeed` may be synchronous or async (returns a Promise) — the poller
+ * awaits it on every tick so it works with both the file-based and
+ * Redis-backed implementations.
+ *
  * If an `AbortSignal` is supplied via `options.signal`, the poll aborts as soon
  * as the signal fires — throwing an `Error` whose `name` is `'AbortError'` — so
  * a disconnected client no longer keeps the loop running for the full budget.
@@ -13,7 +17,7 @@ import { recordPollSample } from './pollMetrics.js';
  * want the per-wait numbers can pass `options.onPollSample`; the aggregate is
  * available from `getPollMetrics()`.
  *
- * @param {() => Array<{ txHash?: string }>} getFeed
+ * @param {() => Array<{ txHash?: string }> | Promise<Array<{ txHash?: string }>>} getFeed
  * @param {number} activityCountBefore
  * @param {{ maxWaitMs: number, initialDelayMs: number, maxDelayMs: number, signal?: AbortSignal, onPollSample?: (sample: import('./pollMetrics.js').PollSample) => void }} options
  * @param {(entry: { txHash?: string }) => boolean} [matchesEntry]
@@ -59,7 +63,8 @@ export async function waitForActivityTxHash(
     throwIfAborted();
 
     polls += 1;
-    const feed = getFeed();
+    // getFeed may be sync or async; await handles both.
+    const feed = await getFeed();
     const addedCount = Math.max(feed.length - activityCountBefore, 0);
     if (addedCount > 0) {
       const recentEntries = feed.slice(0, addedCount);
@@ -92,3 +97,4 @@ export async function waitForActivityTxHash(
   finish('timeout');
   return '';
 }
+

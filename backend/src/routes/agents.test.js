@@ -189,7 +189,7 @@ describe('POST /admin/agents/:address/deactivate', () => {
   });
 });
 
-const mockGetActivityFeed = vi.fn(() => []);
+const mockGetActivityFeed = vi.fn(() => Promise.resolve([]));
 const mockParseActivityPagination = vi.fn(() => ({ limit: 20, offset: 0, errors: [] }));
 
 vi.mock('../lib/activityFeed.js', async () => {
@@ -209,7 +209,7 @@ describe('GET /api/agents/:address/payment-history', () => {
   });
 
   it('returns paginated payment history for a given agent', async () => {
-    mockGetActivityFeed.mockReturnValue([
+    mockGetActivityFeed.mockResolvedValue([
       { agent: VALID_ADDR, txHash: 'abc123', service: 'Weather', amount: '0.001', timestamp: '2026-01-01T00:00:00Z' },
       { agent: VALID_ADDR, txHash: 'def456', service: 'Search', amount: '0.002', timestamp: '2026-01-01T01:00:00Z' },
       { agent: 'GOTHER', txHash: 'other1', service: 'Weather', amount: '0.001', timestamp: '2026-01-01T02:00:00Z' },
@@ -223,7 +223,7 @@ describe('GET /api/agents/:address/payment-history', () => {
   });
 
   it('returns empty payments when no activity matches the agent', async () => {
-    mockGetActivityFeed.mockReturnValue([]);
+    mockGetActivityFeed.mockResolvedValue([]);
 
     const res = await request(app).get(`/agents/${VALID_ADDR}/payment-history`);
     expect(res.status).toBe(200);
@@ -232,7 +232,7 @@ describe('GET /api/agents/:address/payment-history', () => {
   });
 
   it('excludes entries without txHash', async () => {
-    mockGetActivityFeed.mockReturnValue([
+    mockGetActivityFeed.mockResolvedValue([
       { agent: VALID_ADDR, txHash: '', service: 'Weather', amount: '0.001' },
       { agent: VALID_ADDR, txHash: 'real123', service: 'Weather', amount: '0.001' },
       { agent: VALID_ADDR, service: 'NoHash', amount: '0.001' },
@@ -250,7 +250,7 @@ describe('GET /api/agents/:address/payment-history', () => {
       service: 'Weather',
       amount: '0.001',
     }));
-    mockGetActivityFeed.mockReturnValue(entries);
+    mockGetActivityFeed.mockResolvedValue(entries);
     mockParseActivityPagination.mockReturnValueOnce({ limit: 10, offset: 5, errors: [] });
 
     const res = await request(app).get(`/agents/${VALID_ADDR}/payment-history?limit=10&offset=5`);
@@ -262,7 +262,7 @@ describe('GET /api/agents/:address/payment-history', () => {
 
   it('returns 400 when pagination params are invalid', async () => {
     mockParseActivityPagination.mockReturnValueOnce({ limit: 0, offset: 0, errors: ['`limit` must be a positive integer'] });
-    mockGetActivityFeed.mockReturnValueOnce([]);
+    mockGetActivityFeed.mockResolvedValue([]);
 
     const res = await request(app).get(`/agents/${VALID_ADDR}/payment-history?limit=-1`);
     expect(res.status).toBe(400);

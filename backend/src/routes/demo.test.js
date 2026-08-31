@@ -15,7 +15,7 @@ import request from 'supertest';
 
 const mockGetService = vi.fn();
 const mockRecordActivity = vi.fn();
-const mockGetActivityFeed = vi.fn(() => []);
+const mockGetActivityFeed = vi.fn(() => Promise.resolve([]));
 const mockWaitForActivityTxHash = vi.fn().mockResolvedValue('');
 const mockValidateDemoEndpoint = vi.fn();
 const mockBuildHttpClient = vi.fn();
@@ -25,7 +25,7 @@ vi.mock('../lib/contract.js', () => ({
 }));
 
 vi.mock('./services.js', () => ({
-  recordActivity: (...args) => mockRecordActivity(...args),
+  recordActivity: (...args) => Promise.resolve(mockRecordActivity(...args)),
   getActivityFeed: (...args) => mockGetActivityFeed(...args),
 }));
 
@@ -120,7 +120,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetActivityFeed.mockReturnValue([]);
+  mockGetActivityFeed.mockResolvedValue([]);
   mockWaitForActivityTxHash.mockResolvedValue('');
   // Default: endpoint validation passes
   mockValidateDemoEndpoint.mockImplementation((ep) => ep);
