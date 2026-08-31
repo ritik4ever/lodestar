@@ -52,6 +52,10 @@ if (process.argv.includes("--print-config")) {
 validateConfig(logger);
 
 logger.info({ corsOrigin: config.corsOrigin }, "Resolved CORS origin allowlist");
+logger.info(
+  { demoRun: config.demoRun },
+  "Effective activity-poll configuration (override with DEMO_RUN_POLL_* env vars)",
+);
 
 const app = express();
 
