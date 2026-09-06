@@ -7,13 +7,21 @@ export function isValidStellarAddress(address) {
 }
 
 export function validateAgentAddressParam(req, res, next) {
-  const { address } = req.params;
-  if (!isValidStellarAddress(address)) {
-    logger.warn({ address }, 'Invalid agent address parameter');
-    return res.status(400).json({
-      error: 'Invalid Stellar address format',
-      code: 'INVALID_ADDRESS',
-    });
+  try {
+    const address = req?.params?.address;
+    if (!isValidStellarAddress(address)) {
+      logger.warn({ address }, 'Invalid agent address parameter');
+      return res.status(400).json({
+        error: 'Invalid Stellar address format',
+        code: 'INVALID_ADDRESS',
+      });
+    }
+    next();
+  } catch (err) {
+    logger.error({ err }, 'Address validation error');
+    if (typeof next === 'function') {
+      return next(err);
+    }
+    throw err;
   }
-  next();
 }
