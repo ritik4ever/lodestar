@@ -526,7 +526,7 @@
                         "symbol": "last_reset_ledger"
                       },
                       "val": {
-                        "u64": 1005
+                        "u64": 1000
                       }
                     },
                     {

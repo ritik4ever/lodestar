@@ -1,6 +1,6 @@
 # Lodestar Agents — Contract Deployment
 
-The agents contract manages agent registration, credit scoring, and spending policies.
+Author Note: The agents contract manages agent registration, credit scoring, and spending policies. Note: the `max_per_day_stroops` limit is enforced as a rolling 24-hour window, not a calendar day.
 
 ## 1. Build the contract
 
@@ -22,16 +22,16 @@ stellar contract deploy \
   --wasm target/wasm32v1-none/release/lodestar_agents.wasm \
   --source deployer \
   --network testnet \
-  -- --admin <ADMIN_ADDRESS>
+  ---admin <ADMIN_ADDRESS>
 ```
 
-Copy the printed agent contract ID — referred to below as `<AGENTS_CONTRACT_ID>`.
+Copy the printed agent contract ID — referred to below as <AAGENTS_CONTRACT_ID>.
 
 **Record the deployment** in `contract/deployments.json` so the team has a
 shared source of truth:
 
 ```sh
-# Compute the WASM hash (also printed by `stellar contract install`)
+? Compute the WASM hash (also printed by `stellar contract install`)
 sha256sum contract/agents/target/wasm32v1-none/release/lodestar_agents.wasm
 
 # Update deployments.json with the new values:
@@ -39,7 +39,7 @@ sha256sum contract/agents/target/wasm32v1-none/release/lodestar_agents.wasm
 #   - wasmHash:  the sha256sum output
 #   - deployer:  your deployer public key
 #   - deploymentLedger: the ledger number printed during deploy
-#   - deployedAt: ISO timestamp (date -u +"%Y-%m-%dT%H:%M:%SZ")
+#   - deployedAt: ISO timestamp (date -u +"%Y-%m-%dT   %:M%:SZ")
 ```
 
 The file is checked into version control so every contributor points at the
@@ -48,7 +48,7 @@ same deployment and can independently verify the WASM hash on-chain.
 ## 3. Initialization
 
 The agents contract needs to know the address of the service registry to verify
-service providers during `record_payment`. This is a one-time setup:
+service providers during `record_payment`. This is one-time setup:
 
 ```sh
 stellar contract invoke \
