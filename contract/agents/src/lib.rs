@@ -59,6 +59,8 @@ pub struct AgentEntry {
     pub total_payments: u64,
     pub successful_payments: u64,
     pub failed_payments: u64,
+    /// Cumulative value (in stroops) of successful payments only. Failed
+    /// payments do not count toward volume since no value actually moved.
     pub total_volume_stroops: i128,
     pub registered_at: u64,
     pub last_active: u64,
@@ -353,11 +355,11 @@ impl LodestarAgents {
             .expect("policy not found");
 
         agent.total_payments += 1;
-        agent.total_volume_stroops += amount_stroops;
         agent.last_active = env.ledger().sequence() as u64;
 
         if success {
             agent.successful_payments += 1;
+            agent.total_volume_stroops += amount_stroops;
             // Enforce min_score_to_earn: agents below the threshold do not gain
             // score from successful payments, though payment stats are still recorded.
             if agent.score >= policy.min_score_to_earn {
@@ -682,10 +684,27 @@ mod test {
     #[contract]
     pub struct MockRegistry;
 
+    #[contracttype]
+    #[derive(Clone)]
+    pub enum MockDataKey {
+        Provider,
+    }
+
     #[contractimpl]
     impl MockRegistry {
+        pub fn set_provider(env: Env, provider: Address) {
+            env.storage().persistent().set(&MockDataKey::Provider, &provider);
+            env.storage()
+                .persistent()
+                .extend_ttl(&MockDataKey::Provider, TEST_MAX_TTL, TEST_MAX_TTL);
+        }
+
         pub fn get_service(env: Env, id: u64) -> ServiceEntry {
-            // Return a mock service with a generated provider
+            let provider: Address = env
+                .storage()
+                .persistent()
+                .get(&MockDataKey::Provider)
+                .unwrap_or_else(|| Address::generate(&env));
             ServiceEntry {
                 id,
                 name: String::from_str(&env, "Test Service"),
@@ -693,7 +712,7 @@ mod test {
                 endpoint: String::from_str(&env, "http://test.com"),
                 price_usdc: String::from_str(&env, "100"),
                 category: String::from_str(&env, "test"),
-                provider: Address::generate(&env),
+                provider,
                 reputation: 100,
                 active: true,
                 registered_at: env.ledger().sequence() as u64,
@@ -1344,5 +1363,41 @@ mod test {
         
         // Should allow full amount again after reset
         assert!(client.check_spending_allowed(&agent_addr, &1000));
+    }
+
+    /// A failed payment must not inflate `total_volume_stroops` — no value moved.
+    #[test]
+    fn test_failed_payment_does_not_count_toward_volume() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        // Set a fixed provider on the mock registry so record_payment auth passes
+        let provider = Address::generate(&env);
+        let registry_id = env
+            .as_contract(&contract_id, || {
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, Address>(&DataKey::RegistryContract)
+                    .expect("registry contract not set")
+            });
+        let mock_client = MockRegistryClient::new(&env, &registry_id);
+        mock_client.set_provider(&provider);
+
+        // Record a failed payment
+        client.record_payment(&agent_addr, &1u64, &500i128, &false, &provider);
+
+        let agent = client.get_agent(&agent_addr).unwrap();
+        assert_eq!(
+            agent.total_volume_stroops, 0,
+            "failed payment must not count toward volume"
+        );
+        assert_eq!(agent.failed_payments, 1);
+        assert_eq!(agent.total_payments, 1);
     }
 }
