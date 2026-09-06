@@ -1,27 +1,30 @@
 import { ContractError } from './ContractError.js';
 
 export class SimulationError extends ContractError {
-  constructor(message, details) {
+  constructor(message, details, cause) {
     super(message, 'SIMULATION_FAILED');
     this.name = 'SimulationError';
     if (details !== undefined) this.details = details;
+    if (cause) this.cause = cause;
   }
 }
 
 export class TransactionFailedError extends ContractError {
-  constructor(message, hash, details) {
+  constructor(message, hash, details, cause) {
     super(message, 'TRANSACTION_FAILED');
     this.name = 'TransactionFailedError';
     if (hash) this.hash = hash;
     if (details !== undefined) this.details = details;
+    if (cause) this.cause = cause;
   }
 }
 
 export class TransactionTimeoutError extends ContractError {
-  constructor(message, hash) {
+  constructor(message, hash, cause) {
     super(message, 'TRANSACTION_TIMEOUT');
     this.name = 'TransactionTimeoutError';
     if (hash) this.hash = hash;
+    if (cause) this.cause = cause;
   }
 }
 
