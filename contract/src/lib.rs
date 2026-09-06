@@ -343,7 +343,7 @@ impl LodestarRegistry {
         let now = env.ledger().sequence() as u64;
         let vote_key = DataKey::LastVote(id, caller.clone());
         if let Some(last_vote) = env.storage().persistent().get::<DataKey, u64>(&vote_key) {
-            if now < last_vote + VOTE_COOLDOWN_LEDGERS {
+            if now.saturating_sub(last_vote) < VOTE_COOLDOWN_LEDGERS {
                 panic!("cooldown: this agent has voted on this service too recently");
             }
         }
