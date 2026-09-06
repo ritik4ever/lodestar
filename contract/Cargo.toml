@@ -14,6 +14,7 @@ soroban-sdk = { version = "22.0.0", features = ["alloc"] }
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils", "alloc"] }
+proptest = "1"
 # The real agents contract, so integration tests exercise the actual
 # cross-contract call rather than a mock (#835).
 lodestar-agents = { path = "agents", features = ["testutils"] }

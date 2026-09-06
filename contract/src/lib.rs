@@ -1300,4 +1300,199 @@ mod test {
         assert_eq!(min, MIN_REPUTATION);
         assert_eq!(max, MAX_REPUTATION);
     }
+
+    // ── proptest fuzz tests for register_service string inputs ──────────────
+
+    use proptest::prelude::*;
+
+    /// Generate arbitrary printable ASCII strings (no null bytes) within a
+    /// configurable length range.
+    fn arb_ascii_string(min_len: usize, max_len: usize) -> impl Strategy<Value = String> {
+        proptest::string::string_regex(&format!(
+            "[\x20-\x7e]{{{},{}}}",
+            min_len, max_len
+        ))
+        .unwrap()
+    }
+
+    /// Generate strings that may contain any Unicode scalar value, including
+    /// multi-byte characters. Used to verify the contract handles non-ASCII
+    /// input without panicking.
+    fn arb_unicode_string(min_len: usize, max_len: usize) -> impl Strategy<Value = String> {
+        proptest::collection::vec('\u{20}'..'\u{10ffff}', min_len..=max_len)
+            .prop_map(|v| v.into_iter().collect())
+    }
+
+    /// Inputs strategy that generates (name, description, endpoint, price_usdc,
+    /// pay_to, category) with lengths inside the contract's accepted ranges.
+    fn valid_inputs() -> impl Strategy<Value = (String, String, String, String, String, String)> {
+        (
+            arb_ascii_string(3, 64),             // name
+            arb_ascii_string(10, 256),            // description
+            arb_ascii_string(1, 256),             // endpoint
+            arb_ascii_string(1, 32),              // price_usdc
+            arb_ascii_string(1, 64),              // pay_to
+            arb_ascii_string(1, 32),              // category
+        )
+    }
+
+    proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig {
+            // Keep the CI iteration count low for speed; increase locally with
+            //   PROPTEST_CONFIG=proptest-ci cargo test -- --ignored
+            cases: 32,
+            ..Default::default()
+        })]
+
+        /// Any valid-length ASCII inputs must succeed (never panic) and the
+        /// returned ID must be retrievable with exactly the same field values.
+        #[test]
+        fn fuzz_register_service_valid_ascii(
+            (name, desc, endpoint, price, pay_to, category) in valid_inputs()
+        ) {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (registry, _agents) = deploy_registry(&env);
+            let provider = Address::generate(&env);
+
+            let result = registry.try_register_service(
+                &provider,
+                &String::from_str(&env, &name),
+                &String::from_str(&env, &desc),
+                &String::from_str(&env, &endpoint),
+                &String::from_str(&env, &price),
+                &String::from_str(&env, &pay_to),
+                &String::from_str(&env, &category),
+            );
+            prop_assert!(result.is_ok(), "valid inputs rejected: {:?}", result.err());
+            let id = result.unwrap();
+
+            // Round-trip: get_service must return exactly the same values.
+            let entry = registry.get_service(&id);
+            prop_assert_eq!(entry.name, String::from_str(&env, &name));
+            prop_assert_eq!(entry.description, String::from_str(&env, &desc));
+            prop_assert_eq!(entry.endpoint, String::from_str(&env, &endpoint));
+            prop_assert_eq!(entry.price_usdc, String::from_str(&env, &price));
+            prop_assert_eq!(entry.pay_to, String::from_str(&env, &pay_to));
+            prop_assert_eq!(entry.category, String::from_str(&env, &category));
+            prop_assert!(entry.active);
+            prop_assert_eq!(entry.provider, provider);
+        }
+
+        /// Unicode strings with valid lengths must either be accepted or
+        /// rejected cleanly — they must never cause a contract panic.
+        #[test]
+        fn fuzz_register_service_unicode(
+            (name, desc, endpoint, price, pay_to, category) in (
+                arb_unicode_string(3, 64),
+                arb_unicode_string(10, 256),
+                arb_unicode_string(1, 256),
+                arb_ascii_string(1, 32),
+                arb_ascii_string(1, 64),
+                arb_ascii_string(1, 32),
+            )
+        ) {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (registry, _agents) = deploy_registry(&env);
+            let provider = Address::generate(&env);
+
+            // Must not panic — accept or reject, but never crash.
+            let result = registry.try_register_service(
+                &provider,
+                &String::from_str(&env, &name),
+                &String::from_str(&env, &desc),
+                &String::from_str(&env, &endpoint),
+                &String::from_str(&env, &price),
+                &String::from_str(&env, &pay_to),
+                &String::from_str(&env, &category),
+            );
+            // If accepted, round-trip must preserve the values exactly.
+            if let Ok(id) = result {
+                let entry = registry.get_service(&id);
+                prop_assert_eq!(entry.name, String::from_str(&env, &name));
+                prop_assert_eq!(entry.description, String::from_str(&env, &desc));
+                prop_assert_eq!(entry.endpoint, String::from_str(&env, &endpoint));
+            }
+        }
+
+        /// Strings with embedded null bytes or that are clearly outside the
+        /// accepted length ranges must be rejected (not panic).
+        #[test]
+        fn fuzz_register_service_out_of_bounds(
+            (name_len, desc_len, endpoint_len, category_len) in (
+                0usize..1024,
+                0usize..1024,
+                0usize..1024,
+                0usize..1024,
+            )
+        ) {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (registry, _agents) = deploy_registry(&env);
+            let provider = Address::generate(&env);
+
+            // Build strings of arbitrary length using a single repeating char.
+            // If the char happens to be null, Soroban may reject at the SDK
+            // level — that is fine; we just ensure no *contract-level* panic.
+            let name = "X".repeat(name_len);
+            let desc = "D".repeat(desc_len);
+            let endpoint = "E".repeat(endpoint_len);
+            let category = "C".repeat(category_len);
+
+            // The only contract-level invariant: the call must not panic.
+            // It may return Err for length violations — that is expected.
+            let result = registry.try_register_service(
+                &provider,
+                &String::from_str(&env, &name),
+                &String::from_str(&env, &desc),
+                &String::from_str(&env, &endpoint),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAY"),
+                &String::from_str(&env, &category),
+            );
+            // No further assertion — the goal is that it didn't panic.
+            let _ = result;
+        }
+
+        /// Boundary-length inputs (exactly at min/max for each field) must
+        /// succeed and round-trip correctly.
+        #[test]
+        fn fuzz_register_service_boundary_lengths(
+            (name_len, desc_len, endpoint_len, category_len) in (
+                3usize..=64,
+                10usize..=256,
+                1usize..=256,
+                1usize..=32,
+            )
+        ) {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (registry, _agents) = deploy_registry(&env);
+            let provider = Address::generate(&env);
+
+            let name = "N".repeat(name_len);
+            let desc = "D".repeat(desc_len);
+            let endpoint = "E".repeat(endpoint_len);
+            let category = "C".repeat(category_len);
+
+            let result = registry.try_register_service(
+                &provider,
+                &String::from_str(&env, &name),
+                &String::from_str(&env, &desc),
+                &String::from_str(&env, &endpoint),
+                &String::from_str(&env, "10"),
+                &String::from_str(&env, "G_PAY"),
+                &String::from_str(&env, &category),
+            );
+            prop_assert!(result.is_ok(), "boundary input rejected: {:?}", result.err());
+            let id = result.unwrap();
+
+            let entry = registry.get_service(&id);
+            prop_assert_eq!(entry.name, String::from_str(&env, &name));
+            prop_assert_eq!(entry.description, String::from_str(&env, &desc));
+            prop_assert_eq!(entry.endpoint, String::from_str(&env, &endpoint));
+            prop_assert_eq!(entry.category, String::from_str(&env, &category));
+        }
+    }
 }

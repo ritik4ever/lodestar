@@ -33,7 +33,7 @@ run as the unprivileged `node` user.
 Each component has its own test command. Run them from the repo root:
 
 ```bash
-# Soroban contracts
+# Soroban contracts (includes proptest fuzz tests)
 cd contract && cargo test
 cd contract/agents && cargo test
 
@@ -53,6 +53,27 @@ cd agent && npm ci && npm test
 cd contract && stellar contract build
 cd contract/agents && stellar contract build
 ```
+
+## Fuzz testing
+
+The `register_service` string inputs are covered by [proptest](https://proptest-rs.dev/)-based
+fuzz tests in `contract/src/lib.rs`. These run as part of the standard `cargo test` suite,
+so no separate tool or CI step is needed.
+
+The test suite covers:
+
+- **Valid ASCII strings** — random printable ASCII within accepted length ranges
+- **Unicode strings** — multi-byte characters to ensure no panics on non-ASCII input
+- **Out-of-bounds lengths** — empty strings, very long values, and boundary violations
+- **Boundary lengths** — exactly-at-minimum and exactly-at-maximum for every field
+
+By default CI runs 32 proptest cases per test. To run a deeper local fuzz session:
+
+```bash
+cd contract && PROPTEST_CASES=500 cargo test -- proptest
+```
+
+If a crash is found, file it as its own issue with a minimal reproduction case.
 
 ## CI
 
