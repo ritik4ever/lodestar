@@ -77,7 +77,7 @@ export default function CreditScoreDemo() {
       setSpendResult(res.allowed ? 'allowed' : 'blocked');
       setSpendDetail(res.allowed
         ? `$${SIMULATE_AMOUNT} USDC within daily limit of $${DAILY_LIMIT_USDC} USDC`
-        : res.reason);
+        : res.reason ?? 'Policy limit exceeded');
     } catch {
       setSpendResult('blocked');
       setSpendDetail('Policy check failed');

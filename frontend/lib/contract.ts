@@ -1,53 +1,42 @@
-import type {
-  ServiceEntry,
-  StatsResponse,
-  ServicesResponse,
-  ReputationResponse,
-  Category,
-  AgentEntry,
-  SpendingPolicy,
-  AgentStats,
-  AgentsResponse,
-  AgentEligibilityResponse,
-  AgentSpendCheckResponse,
-  AgentSortOption,
-} from './types';
+import {
+  LodestarClient,
+  type ServiceEntry,
+  type StatsResponse,
+  type ServicesResponse,
+  type ReputationResponse,
+  type Category,
+  type AgentEntry,
+  type SpendingPolicy,
+  type AgentStats,
+  type AgentsResponse,
+  type AgentEligibilityResponse,
+  type AgentSpendCheckResponse,
+  type AgentSortOption,
+} from '../../packages/client/index.js';
 import { PAGE_SIZE } from './pagination';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    // 60s timeout to handle Render cold start (~50s wake time)
-    signal: AbortSignal.timeout(60000),
-    ...init,
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `Request failed: ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
+export const apiClient = new LodestarClient({
+  baseUrl: API_URL,
+  timeoutMs: 60000,
+});
 
 export async function fetchServices(category?: Category): Promise<ServiceEntry[]> {
-  const query = category ? `?category=${category}` : '';
-  const data = await apiFetch<ServicesResponse>(`/api/services${query}`);
+  const data = await apiClient.getServices({ category });
   return data.services;
 }
 
 export async function fetchStats(): Promise<StatsResponse> {
-  return apiFetch<StatsResponse>('/api/stats');
+  return apiClient.getStats();
 }
 
 export async function fetchServiceById(id: number): Promise<ServiceEntry> {
-  return apiFetch<ServiceEntry>(`/api/services/${id}`);
+  return apiClient.getServiceById(id);
 }
 
 export async function fetchServicesByProvider(address: string): Promise<ServiceEntry[]> {
-  const data = await apiFetch<ServicesResponse>(
-    `/api/registry/by-provider/${encodeURIComponent(address)}`
-  );
+  const data = await apiClient.getServicesByProvider(address);
   return data.services;
 }
 
@@ -66,10 +55,7 @@ export async function submitReputation(
       'No voting agent configured. Set NEXT_PUBLIC_DEMO_AGENT_ADDRESS to a registered demo agent.'
     );
   }
-  return apiFetch<ReputationResponse>(`/api/reputation/${id}`, {
-    method: 'POST',
-    body: JSON.stringify({ positive, agent }),
-  });
+  return apiClient.submitReputation(id, { positive, agent });
 }
 
 export interface RegisterFormData {
@@ -80,38 +66,24 @@ export interface RegisterFormData {
   category: Category;
 }
 
-interface PreparedRegistryTxResponse {
-  xdr: string;
-  submitToken: string;
-}
-
-interface SubmittedRegistryTxResponse {
-  success: boolean;
-  hash: string;
-  id: number | null;
-}
-
 export async function registerService(
   formData: RegisterFormData,
   walletAddress: string
 ): Promise<{ txHash: string; id: number }> {
   const { kitSignTransaction: signTx } = await import('./wallet');
-  const prepared = await apiFetch<PreparedRegistryTxResponse>('/api/registry/prepare-register', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: formData.name,
-      description: formData.description,
-      endpoint: formData.endpoint,
-      priceUsdc: formData.price_usdc,
-      category: formData.category,
-      providerAddress: walletAddress,
-    }),
+  const prepared = await apiClient.prepareRegisterService({
+    name: formData.name,
+    description: formData.description,
+    endpoint: formData.endpoint,
+    priceUsdc: formData.price_usdc,
+    category: formData.category,
+    providerAddress: walletAddress,
   });
 
   const signedXdr = await signTx(prepared.xdr);
-  const result = await apiFetch<SubmittedRegistryTxResponse>('/api/registry/submit-signed-tx', {
-    method: 'POST',
-    body: JSON.stringify({ signedXdr, submitToken: prepared.submitToken }),
+  const result = await apiClient.submitSignedRegistryTx({
+    signedXdr,
+    submitToken: prepared.submitToken,
   });
 
   if (!result.success || result.id == null) {
@@ -124,7 +96,7 @@ export async function registerService(
 // ── Agent Credit Scoring ──────────────────────────────────────────────────────
 
 // Contract ID for the LodestarAgents on-chain program.
-// All current agent operations flow through the backend API (see apiFetch above).
+// All current agent operations flow through the backend API (see apiClient above).
 // Wire this into a direct contract call if/when the frontend needs to invoke
 // agent operations without a backend intermediary.
 export const AGENTS_CONTRACT_ID = process.env.NEXT_PUBLIC_AGENTS_CONTRACT_ID ?? '';
@@ -134,30 +106,24 @@ export async function fetchAgents(
   pageSize = PAGE_SIZE,
   sort: AgentSortOption = 'score'
 ): Promise<AgentsResponse> {
-  return apiFetch<AgentsResponse>(
-    `/api/agents?page=${page}&pageSize=${pageSize}&sort=${sort}`
-  );
+  return apiClient.getAgents({ page, pageSize, sort });
 }
 
 export async function fetchAgent(
   address: string
 ): Promise<{ agent: AgentEntry; policy: SpendingPolicy | null }> {
-  return apiFetch<{ agent: AgentEntry; policy: SpendingPolicy | null }>(
-    `/api/agents/${address}`
-  );
+  return apiClient.getAgent(address);
 }
 
 export async function fetchAgentStats(): Promise<AgentStats> {
-  return apiFetch<AgentStats>('/api/agents/stats');
+  return apiClient.getAgentStats();
 }
 
 export async function fetchAgentEligibility(
   address: string,
   minScore: number
 ): Promise<AgentEligibilityResponse> {
-  return apiFetch<AgentEligibilityResponse>(
-    `/api/agents/${address}/eligible?min_score=${minScore}`
-  );
+  return apiClient.getAgentEligibility(address, minScore);
 }
 
 export async function fetchAgentSpendCheck(
@@ -165,7 +131,5 @@ export async function fetchAgentSpendCheck(
   amount: string,
   category: string
 ): Promise<AgentSpendCheckResponse> {
-  return apiFetch<AgentSpendCheckResponse>(
-    `/api/agents/${address}/can-spend?amount=${encodeURIComponent(amount)}&category=${encodeURIComponent(category)}`
-  );
+  return apiClient.checkAgentCanSpend(address, { amount, category });
 }

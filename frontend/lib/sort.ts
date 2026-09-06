@@ -19,7 +19,7 @@ export function sortServices(
       return parseFloat(a.price_usdc) - parseFloat(b.price_usdc);
     }
     // 'newest' - highest registered_at first
-    return b.registered_at - a.registered_at;
+    return (b.registered_at ?? 0) - (a.registered_at ?? 0);
   });
 }
 
@@ -42,7 +42,7 @@ export function sortAgents(
       return Number(b.total_payments) - Number(a.total_payments);
     }
     // 'newest' - highest registered_at first
-    return Number(b.registered_at) - Number(a.registered_at);
+    return Number(b.registered_at ?? 0) - Number(a.registered_at ?? 0);
   });
 }
 
@@ -67,7 +67,7 @@ export function sortServicesWithTieBreaker(
     } else if (sort === 'price') {
       result = parseFloat(a.price_usdc) - parseFloat(b.price_usdc);
     } else {
-      result = b.registered_at - a.registered_at;
+      result = (b.registered_at ?? 0) - (a.registered_at ?? 0);
     }
     if (result === 0 && tieBreaker) {
       return tieBreaker(a, b);
@@ -96,7 +96,7 @@ export function sortAgentsWithTieBreaker(
     } else if (sort === 'payments') {
       result = Number(b.total_payments) - Number(a.total_payments);
     } else {
-      result = Number(b.registered_at) - Number(a.registered_at);
+      result = Number(b.registered_at ?? 0) - Number(a.registered_at ?? 0);
     }
     if (result === 0 && tieBreaker) {
       return tieBreaker(a, b);

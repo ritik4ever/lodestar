@@ -1,0 +1,23 @@
+{
+  "name": "@lodestar/client",
+  "version": "1.0.0",
+  "description": "Typed OpenAPI client for the Lodestar API, consumed by the frontend, agent, and external integrators.",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "default": "./index.js"
+    },
+    "./openapi.json": "./openapi.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "openapi.json",
+    "README.md"
+  ],
+  "license": "Apache-2.0"
+}

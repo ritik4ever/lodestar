@@ -1,0 +1,1011 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Lodestar API",
+    "version": "1.0.0",
+    "description": "On-chain service discovery and credit scoring protocol for x402 AI agents on Stellar."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "Local development server"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Liveness check",
+        "description": "Returns process uptime, queue depth, and status.",
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Readiness check",
+        "description": "Checks connectivity to Soroban RPC and Redis.",
+        "responses": {
+          "200": {
+            "description": "Backend is ready to serve traffic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Backend dependency unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stats": {
+      "get": {
+        "summary": "Get aggregate registry and agent stats",
+        "responses": {
+          "200": {
+            "description": "Aggregate statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/services": {
+      "get": {
+        "summary": "List services",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Category"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of active registered services",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServicesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/services/{id}": {
+      "get": {
+        "summary": "Get service by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Service entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceEntry"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Service not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/registry/by-provider/{address}": {
+      "get": {
+        "summary": "Get services registered by provider",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Services by provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServicesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/registry/prepare-register": {
+      "post": {
+        "summary": "Prepare an unsigned transaction to register a service",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareRegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Unsigned transaction XDR and submit token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepareRegisterResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/registry/submit-signed-tx": {
+      "post": {
+        "summary": "Submit a wallet-signed service registration transaction",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitSignedRegistryTxRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transaction result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitSignedRegistryTxResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reputation/{id}": {
+      "post": {
+        "summary": "Submit a reputation vote for a service",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitReputationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated reputation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReputationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents": {
+      "get": {
+        "summary": "List agents with pagination",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 12
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["score", "payments", "registered_at", "newest"],
+              "default": "score"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated agents list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/stats": {
+      "get": {
+        "summary": "Get aggregate agent scoring statistics",
+        "responses": {
+          "200": {
+            "description": "Agent stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentStats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/register": {
+      "post": {
+        "summary": "Register a new AI agent on-chain",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterAgentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Agent registered successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterAgentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{address}": {
+      "get": {
+        "summary": "Get agent profile and spending policy",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentProfileResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{address}/eligible": {
+      "get": {
+        "summary": "Check if agent meets minimum score for a service tier",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "min_score",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Eligibility result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentEligibilityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{address}/can-spend": {
+      "get": {
+        "summary": "Check spending policy limits for an upcoming transaction",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "amount",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "amount_stroops",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spend check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSpendCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{address}/payment": {
+      "post": {
+        "summary": "Record a payment result and update agent score",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordPaymentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment recorded and score updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordPaymentResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{address}/build-tx": {
+      "post": {
+        "summary": "Build an unsigned transaction XDR for agent policy management",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-caller-address",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAgentTxRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Unsigned transaction XDR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildAgentTxResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{address}/submit-signed-tx": {
+      "post": {
+        "summary": "Submit a wallet-signed agent transaction",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitSignedAgentTxRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transaction submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitSignedAgentTxResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/activity": {
+      "get": {
+        "summary": "Get live activity events",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Activity events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/demo/activity": {
+      "get": {
+        "summary": "Get demo activity events",
+        "responses": {
+          "200": {
+            "description": "Demo activity feed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoActivityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Category": {
+        "type": "string",
+        "enum": ["search", "weather", "finance", "ai", "data", "compute"]
+      },
+      "ServiceEntry": {
+        "type": "object",
+        "required": ["id", "name", "description", "endpoint", "price_usdc", "category", "provider", "reputation", "active"],
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "price_usdc": { "type": "string" },
+          "category": { "$ref": "#/components/schemas/Category" },
+          "provider": { "type": "string" },
+          "reputation": { "type": "integer" },
+          "active": { "type": "boolean" },
+          "registered_at": { "type": "integer", "nullable": true }
+        }
+      },
+      "ServicesResponse": {
+        "type": "object",
+        "required": ["services"],
+        "properties": {
+          "services": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ServiceEntry" }
+          },
+          "total": { "type": "integer" }
+        }
+      },
+      "StatsResponse": {
+        "type": "object",
+        "required": ["total_services", "total_categories", "active_services", "top_category"],
+        "properties": {
+          "total_services": { "type": "integer" },
+          "total_categories": { "type": "integer" },
+          "active_services": { "type": "integer" },
+          "top_category": { "type": "string" },
+          "total_agents": { "type": "integer" },
+          "total_volume_stroops": { "type": "string" },
+          "total_volume_usdc": { "type": "string" },
+          "average_score": { "type": "integer" }
+        }
+      },
+      "PrepareRegisterRequest": {
+        "type": "object",
+        "required": ["name", "description", "endpoint", "priceUsdc", "category", "providerAddress"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "priceUsdc": { "type": "string" },
+          "category": { "$ref": "#/components/schemas/Category" },
+          "providerAddress": { "type": "string" }
+        }
+      },
+      "PrepareRegisterResponse": {
+        "type": "object",
+        "required": ["xdr", "submitToken"],
+        "properties": {
+          "xdr": { "type": "string" },
+          "submitToken": { "type": "string" }
+        }
+      },
+      "SubmitSignedRegistryTxRequest": {
+        "type": "object",
+        "required": ["signedXdr", "submitToken"],
+        "properties": {
+          "signedXdr": { "type": "string" },
+          "submitToken": { "type": "string" }
+        }
+      },
+      "SubmitSignedRegistryTxResponse": {
+        "type": "object",
+        "required": ["success", "hash"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "hash": { "type": "string" },
+          "id": { "type": "integer", "nullable": true }
+        }
+      },
+      "SubmitReputationRequest": {
+        "type": "object",
+        "required": ["positive", "agent"],
+        "properties": {
+          "positive": { "type": "boolean" },
+          "agent": { "type": "string" }
+        }
+      },
+      "ReputationResponse": {
+        "type": "object",
+        "required": ["newReputation"],
+        "properties": {
+          "newReputation": { "type": "integer" },
+          "txHash": { "type": "string", "nullable": true }
+        }
+      },
+      "AgentEntry": {
+        "type": "object",
+        "required": [
+          "address",
+          "name",
+          "description",
+          "score",
+          "total_payments",
+          "successful_payments",
+          "failed_payments",
+          "total_volume_stroops",
+          "active",
+          "flagged"
+        ],
+        "properties": {
+          "address": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "score": { "type": "integer" },
+          "total_payments": { "type": "string" },
+          "successful_payments": { "type": "string" },
+          "failed_payments": { "type": "string" },
+          "total_volume_stroops": { "type": "string" },
+          "active": { "type": "boolean" },
+          "flagged": { "type": "boolean" },
+          "registered_at": { "type": "integer", "nullable": true },
+          "owner": { "type": "string" }
+        }
+      },
+      "SpendingPolicy": {
+        "type": "object",
+        "required": ["max_per_tx_stroops", "max_per_day_stroops", "spent_today_stroops", "last_spend_day", "allowed_categories", "min_score_to_earn"],
+        "properties": {
+          "max_per_tx_stroops": { "type": "string" },
+          "max_per_day_stroops": { "type": "string" },
+          "spent_today_stroops": { "type": "string" },
+          "last_spend_day": { "type": "integer" },
+          "allowed_categories": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "min_score_to_earn": { "type": "integer" }
+        }
+      },
+      "AgentsResponse": {
+        "type": "object",
+        "required": ["agents", "total", "page", "pageSize", "totalPages"],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/AgentEntry" }
+          },
+          "total": { "type": "integer" },
+          "page": { "type": "integer" },
+          "pageSize": { "type": "integer" },
+          "totalPages": { "type": "integer" }
+        }
+      },
+      "AgentStats": {
+        "type": "object",
+        "required": ["total_agents", "active_agents", "flagged_agents", "average_score", "total_volume_stroops", "tier_distribution"],
+        "properties": {
+          "total_agents": { "type": "integer" },
+          "active_agents": { "type": "integer" },
+          "flagged_agents": { "type": "integer" },
+          "average_score": { "type": "integer" },
+          "total_volume_stroops": { "type": "string" },
+          "tier_distribution": {
+            "type": "object",
+            "properties": {
+              "unrated": { "type": "integer" },
+              "bronze": { "type": "integer" },
+              "silver": { "type": "integer" },
+              "gold": { "type": "integer" },
+              "platinum": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "AgentProfileResponse": {
+        "type": "object",
+        "required": ["agent"],
+        "properties": {
+          "agent": { "$ref": "#/components/schemas/AgentEntry" },
+          "policy": {
+            "allOf": [{ "$ref": "#/components/schemas/SpendingPolicy" }],
+            "nullable": true
+          }
+        }
+      },
+      "RegisterAgentRequest": {
+        "type": "object",
+        "required": ["name", "description", "address"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "address": { "type": "string" },
+          "endpoint": { "type": "string" }
+        }
+      },
+      "RegisterAgentResponse": {
+        "type": "object",
+        "required": ["agent"],
+        "properties": {
+          "txHash": { "type": "string", "nullable": true },
+          "agent": { "$ref": "#/components/schemas/AgentEntry" }
+        }
+      },
+      "AgentEligibilityResponse": {
+        "type": "object",
+        "required": ["eligible", "score", "minScore"],
+        "properties": {
+          "eligible": { "type": "boolean" },
+          "score": { "type": "integer" },
+          "minScore": { "type": "integer" }
+        }
+      },
+      "AgentSpendCheckResponse": {
+        "type": "object",
+        "required": ["allowed"],
+        "properties": {
+          "allowed": { "type": "boolean" },
+          "reason": { "type": "string", "nullable": true },
+          "currentScore": { "type": "integer", "nullable": true },
+          "dailySpent": { "type": "string", "nullable": true },
+          "dailyLimit": { "type": "string", "nullable": true }
+        }
+      },
+      "RecordPaymentRequest": {
+        "type": "object",
+        "required": ["success", "stroops"],
+        "properties": {
+          "success": { "type": "boolean" },
+          "stroops": { "type": "string" },
+          "txHash": { "type": "string" }
+        }
+      },
+      "RecordPaymentResponse": {
+        "type": "object",
+        "required": ["newScore"],
+        "properties": {
+          "newScore": { "type": "integer" },
+          "txHash": { "type": "string", "nullable": true }
+        }
+      },
+      "BuildAgentTxRequest": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "BuildAgentTxResponse": {
+        "type": "object",
+        "required": ["xdr"],
+        "properties": {
+          "xdr": { "type": "string" }
+        }
+      },
+      "SubmitSignedAgentTxRequest": {
+        "type": "object",
+        "required": ["signedXdr"],
+        "properties": {
+          "signedXdr": { "type": "string" }
+        }
+      },
+      "SubmitSignedAgentTxResponse": {
+        "type": "object",
+        "required": ["txHash"],
+        "properties": {
+          "txHash": { "type": "string" }
+        }
+      },
+      "ActivityEvent": {
+        "type": "object",
+        "required": ["id", "type", "timestamp"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "timestamp": { "type": "string" },
+          "data": { "type": "object" }
+        }
+      },
+      "ActivityResponse": {
+        "type": "object",
+        "required": ["events"],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ActivityEvent" }
+          },
+          "pagination": { "type": "object" }
+        }
+      },
+      "DemoActivityEntry": {
+        "type": "object",
+        "required": ["id", "type", "timestamp", "summary"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "timestamp": { "type": "string" },
+          "summary": { "type": "string" },
+          "agent": { "type": "string" },
+          "service": { "type": "string" },
+          "amount": { "type": "string" },
+          "txHash": { "type": "string" }
+        }
+      },
+      "DemoActivityResponse": {
+        "type": "object",
+        "required": ["activity"],
+        "properties": {
+          "activity": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/DemoActivityEntry" }
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": ["status", "uptimeSeconds", "timestamp"],
+        "properties": {
+          "status": { "type": "string" },
+          "uptimeSeconds": { "type": "integer" },
+          "queueDepth": { "type": "integer" },
+          "pendingTransactions": { "type": "integer" },
+          "timestamp": { "type": "string" }
+        }
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "required": ["ready", "status", "timestamp"],
+        "properties": {
+          "ready": { "type": "boolean" },
+          "status": { "type": "string" },
+          "rpc": { "type": "object" },
+          "redis": { "type": "object" },
+          "timestamp": { "type": "string" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string" },
+          "code": { "type": "string" },
+          "requestId": { "type": "string" }
+        }
+      }
+    }
+  }
+}
