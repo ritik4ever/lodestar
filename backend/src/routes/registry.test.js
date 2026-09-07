@@ -562,6 +562,52 @@ describe('POST /api/registry/prepare-deactivate', () => {
   });
 });
 
+describe('POST /api/registry/prepare-reactivate', () => {
+  const VALID_PROVIDER = VALID_STELLAR_ADDRESS;
+
+  beforeEach(() => {
+    mockBuildUnsignedRegistryTx.mockReset();
+  });
+
+  it('builds unsigned XDR for service reactivation', async () => {
+    mockBuildUnsignedRegistryTx.mockResolvedValueOnce({
+      xdr: 'AAAA_REACTIVATE_XDR',
+      submitToken: 'submit-token-reactivate',
+    });
+
+    const res = await request(app)
+      .post('/api/registry/prepare-reactivate')
+      .send({ providerAddress: VALID_PROVIDER, id: 7 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      xdr: 'AAAA_REACTIVATE_XDR',
+      submitToken: 'submit-token-reactivate',
+    });
+    expect(mockBuildUnsignedRegistryTx).toHaveBeenCalledWith('reactivate', VALID_PROVIDER, { id: 7 });
+  });
+
+  it('rejects invalid providerAddress in reactivation payloads', async () => {
+    const res = await request(app)
+      .post('/api/registry/prepare-reactivate')
+      .send({ providerAddress: 'bad', id: 7 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_BODY');
+    expect(mockBuildUnsignedRegistryTx).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid reactivation ids', async () => {
+    const res = await request(app)
+      .post('/api/registry/prepare-reactivate')
+      .send({ providerAddress: VALID_PROVIDER, id: '7abc' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_BODY');
+    expect(mockBuildUnsignedRegistryTx).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /api/registry/submit-signed-tx', () => {
   beforeEach(() => {
     mockValidatePreparedRegistrySubmission.mockReset();

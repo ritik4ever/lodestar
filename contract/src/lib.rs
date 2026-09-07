@@ -70,6 +70,17 @@ fn active_service_exists(env: &Env, provider: &Address, endpoint: &String) -> bo
     ))
 }
 
+fn vec_contains_id(ids: &Vec<u64>, id: u64) -> bool {
+    let mut i = 0;
+    while i < ids.len() {
+        if ids.get(i).unwrap() == id {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 #[contract]
 pub struct LodestarRegistry;
 
@@ -477,6 +488,76 @@ impl LodestarRegistry {
         );
     }
 
+    pub fn reactivate_service(env: Env, provider: Address, id: u64) {
+        provider.require_auth();
+
+        let mut entry: ServiceEntry = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Service(id))
+            .expect("Service not found");
+
+        assert!(
+            provider == entry.provider,
+            "Only the provider can reactivate this service"
+        );
+        assert!(
+            !active_service_exists(&env, &provider, &entry.endpoint),
+            "Active service with same provider and endpoint already exists"
+        );
+
+        entry.active = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Service(id), &entry);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Service(id), MAX_TTL, MAX_TTL);
+
+        let endpoint_key =
+            DataKey::ProviderEndpoint(entry.provider.clone(), entry.endpoint.clone());
+        env.storage().persistent().set(&endpoint_key, &id);
+        env.storage()
+            .persistent()
+            .extend_ttl(&endpoint_key, MAX_TTL, MAX_TTL);
+
+        let mut ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ServiceIds)
+            .unwrap_or_else(|| vec![&env]);
+        if !vec_contains_id(&ids, id) {
+            ids.push_back(id);
+            env.storage().persistent().set(&DataKey::ServiceIds, &ids);
+        }
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::ServiceIds, MAX_TTL, MAX_TTL);
+
+        let cat_key = DataKey::ServiceIdsByCategory(entry.category.clone());
+        let mut cat_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&cat_key)
+            .unwrap_or_else(|| vec![&env]);
+        if !vec_contains_id(&cat_ids, id) {
+            cat_ids.push_back(id);
+            env.storage().persistent().set(&cat_key, &cat_ids);
+        }
+        env.storage()
+            .persistent()
+            .extend_ttl(&cat_key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "reactivated"),
+                id,
+            ),
+            (provider,),
+        );
+    }
+
     pub fn get_service_count(env: Env) -> u64 {
         env.storage()
             .persistent()
@@ -854,6 +935,77 @@ mod test {
 
     // ── update_reputation authorization tests ─────────────────────────────────
 
+    #[test]
+    fn test_reactivate_service_restores_visibility_and_preserves_reputation() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+        let registry = LodestarRegistryClient::new(&env, &contract_id);
+        let provider = Address::generate(&env);
+
+        env.clone().as_contract(&contract_id, || {
+            setup_service(&env, 1, &provider, "compute", 42, true);
+        });
+
+        registry.deactivate_service(&provider, &1);
+        assert_eq!(registry.get_service(&1).reputation, 42);
+        assert!(!registry.get_service(&1).active);
+        assert_eq!(registry.list_services(&0, &20, &None).len(), 0);
+        assert_eq!(
+            registry
+                .list_services(&0, &20, &Some(String::from_str(&env, "compute")))
+                .len(),
+            0
+        );
+
+        registry.reactivate_service(&provider, &1);
+        let service = registry.get_service(&1);
+        assert!(service.active);
+        assert_eq!(service.reputation, 42);
+        assert!(active_service_exists(&env, &provider, &service.endpoint));
+
+        let all = registry.list_services(&0, &20, &None);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all.get(0).unwrap().id, 1);
+
+        let by_category =
+            registry.list_services(&0, &20, &Some(String::from_str(&env, "compute")));
+        assert_eq!(by_category.len(), 1);
+        assert_eq!(by_category.get(0).unwrap().id, 1);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 2);
+        let event = events.get(1).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "reactivated"),
+                1u64,
+            )
+                .into_val(&env)
+        );
+        assert_eq!(<(Address,)>::from_val(&env, &event.2), (provider,));
+    }
+
+    #[test]
+    fn test_reactivate_service_rejects_non_provider() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(LodestarRegistry, (Address::generate(&env),));
+        let registry = LodestarRegistryClient::new(&env, &contract_id);
+        let provider = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        env.clone().as_contract(&contract_id, || {
+            setup_service(&env, 1, &provider, "compute", 42, false);
+        });
+
+        assert!(registry.try_reactivate_service(&other, &1).is_err());
+        let service = registry.get_service(&1);
+        assert!(!service.active);
+        assert_eq!(service.reputation, 42);
+    }
     // Minimal stand-in for the LodestarAgents contract exposing just the
     // `is_registered` entrypoint the registry cross-calls.
     #[contract]

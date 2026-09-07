@@ -134,6 +134,32 @@ export async function registerService(
   return { txHash: result.hash, id: result.id };
 }
 
+export async function reactivateService(
+  id: number,
+  walletAddress: string
+): Promise<{ txHash: string }> {
+  const { kitSignTransaction: signTx } = await import('./wallet');
+  const prepared = await apiFetch<PreparedRegistryTxResponse>('/api/registry/prepare-reactivate', {
+    method: 'POST',
+    body: JSON.stringify({
+      id,
+      providerAddress: walletAddress,
+    }),
+  });
+
+  const signedXdr = await signTx(prepared.xdr);
+  const result = await apiFetch<SubmittedRegistryTxResponse>('/api/registry/submit-signed-tx', {
+    method: 'POST',
+    body: JSON.stringify({ signedXdr, submitToken: prepared.submitToken }),
+  });
+
+  if (!result.success) {
+    throw new Error('Reactivation transaction was not accepted');
+  }
+
+  return { txHash: result.hash };
+}
+
 // ── Agent Credit Scoring ──────────────────────────────────────────────────────
 
 // Contract ID for the LodestarAgents on-chain program.

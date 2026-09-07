@@ -419,6 +419,31 @@ router.post("/registry/prepare-deactivate", writeRateLimiter(), async (req, res)
   }
 });
 
+router.post("/registry/prepare-reactivate", writeRateLimiter(), async (req, res) => {
+  try {
+    const { providerAddress, id } = req.body ?? {};
+    if (!isValidStellarAddress(providerAddress)) {
+      return res.status(400).json({ error: "`providerAddress` must be a valid Stellar address", code: "INVALID_BODY" });
+    }
+
+    const parsedId = parsePositiveSafeInteger(id);
+    if (parsedId == null) {
+      return res.status(400).json({ error: "`id` must be a positive integer", code: "INVALID_BODY" });
+    }
+
+    const prepared = await buildUnsignedRegistryTx("reactivate", providerAddress, { id: parsedId });
+    logger.info({ providerAddress, id: parsedId }, "Built unsigned registry reactivation tx");
+    res.json(prepared);
+  } catch (err) {
+    if (err instanceof ContractError) {
+      const status = err.code === "TRANSACTION_TIMEOUT" ? 504 : 400;
+      return res.status(status).json({ error: err.message, code: err.code });
+    }
+    logger.error({ err }, "POST /api/registry/prepare-reactivate failed");
+    res.status(500).json({ error: "Failed to build transaction", code: "BUILD_TX_ERROR" });
+  }
+});
+
 router.post("/registry/submit-signed-tx", writeRateLimiter(), async (req, res) => {
   try {
     const { signedXdr, submitToken } = req.body ?? {};
