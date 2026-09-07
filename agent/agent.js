@@ -524,7 +524,7 @@ export async function initiateShutdown(signal) {
   shutdownTimer.unref();
 }
 
-async function completeShutdown(success, unresolved) {
+export async function completeShutdown(success, unresolved) {
   if (shutdownTimer) clearTimeout(shutdownTimer);
 
   const finalScore = currentScore;
