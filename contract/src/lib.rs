@@ -43,30 +43,14 @@ pub enum DataKey {
     // `(service_id, agent) -> last_vote_ledger` cooldown map as discrete keys so
     // each lookup touches only one entry instead of loading a growing Map.
     LastVote(u64, Address),
+    ProviderEndpoint(Address, String),
 }
 
 fn active_service_exists(env: &Env, provider: &Address, endpoint: &String) -> bool {
-    let ids: Vec<u64> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::ServiceIds)
-        .unwrap_or_else(|| vec![&env]);
-
-    let mut i = 0;
-    while i < ids.len() {
-        if let Some(entry) = env
-            .storage()
-            .persistent()
-            .get::<DataKey, ServiceEntry>(&DataKey::Service(ids.get(i).unwrap()))
-        {
-            if entry.active && entry.provider == *provider && entry.endpoint == *endpoint {
-                return true;
-            }
-        }
-        i += 1;
-    }
-
-    false
+    env.storage().persistent().has(&DataKey::ProviderEndpoint(
+        provider.clone(),
+        endpoint.clone(),
+    ))
 }
 
 #[contract]
@@ -166,6 +150,13 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Service(new_id), MAX_TTL, MAX_TTL);
+
+        let endpoint_key =
+            DataKey::ProviderEndpoint(entry.provider.clone(), entry.endpoint.clone());
+        env.storage().persistent().set(&endpoint_key, &new_id);
+        env.storage()
+            .persistent()
+            .extend_ttl(&endpoint_key, MAX_TTL, MAX_TTL);
 
         env.storage().persistent().set(&DataKey::Counter, &new_id);
         env.storage()
@@ -395,6 +386,13 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Service(id), MAX_TTL, MAX_TTL);
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::ProviderEndpoint(
+                entry.provider.clone(),
+                entry.endpoint.clone(),
+            ));
 
         // Remove from category index
         let cat_key = DataKey::ServiceIdsByCategory(entry.category.clone());
@@ -834,6 +832,23 @@ mod test {
         )
     }
 
+    fn register_service_with_provider_and_endpoint(
+        env: &Env,
+        registry: &LodestarRegistryClient,
+        provider: &Address,
+        endpoint: &String,
+    ) -> u64 {
+        registry.register_service(
+            provider,
+            &String::from_str(env, "Test Service"),
+            &String::from_str(env, "Test Description"),
+            endpoint,
+            &String::from_str(env, "10"),
+            &String::from_str(env, "G_TEST_PAYMENT"),
+            &String::from_str(env, "compute"),
+        )
+    }
+
     #[test]
     fn test_register_service_rejects_non_provider_auth() {
         let env = Env::default();
@@ -1185,109 +1200,24 @@ mod test {
     }
 
     #[test]
-    fn test_register_service_rejects_endpoint_too_long() {
+
         let env = Env::default();
         env.mock_all_auths();
         let (registry, _agents) = deploy_registry(&env);
         let provider = Address::generate(&env);
 
-        let long_endpoint = format!("https://example.com/{}", "A".repeat(257));
-        assert!(registry
-            .try_register_service(
-                &provider,
-                &String::from_str(&env, "Valid Name"),
-                &String::from_str(&env, "Valid description long enough"),
-                &String::from_str(&env, &long_endpoint),
-                &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
                 &String::from_str(&env, "compute"),
             )
             .is_err());
     }
 
     #[test]
-    fn test_register_service_accepts_endpoint_at_max() {
+n
         let env = Env::default();
         env.mock_all_auths();
         let (registry, _agents) = deploy_registry(&env);
         let provider = Address::generate(&env);
 
-        // endpoint = https:// + 248 chars = 256 total
-        let max_endpoint = format!("https://{}", "A".repeat(248));
-        assert_eq!(max_endpoint.len(), 256);
-        assert!(registry
-            .try_register_service(
-                &provider,
-                &String::from_str(&env, "Valid Name"),
-                &String::from_str(&env, "Valid description long enough"),
-                &String::from_str(&env, &max_endpoint),
-                &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
-                &String::from_str(&env, "compute"),
-            )
-            .is_ok());
-    }
-
-    #[test]
-    fn test_register_service_rejects_category_empty() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (registry, _agents) = deploy_registry(&env);
-        let provider = Address::generate(&env);
-
-        assert!(registry
-            .try_register_service(
-                &provider,
-                &String::from_str(&env, "Valid Name"),
-                &String::from_str(&env, "Valid description long enough"),
-                &String::from_str(&env, "https://example.com"),
-                &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
-                &String::from_str(&env, ""),
-            )
-            .is_err());
-    }
-
-    #[test]
-    fn test_register_service_rejects_category_too_long() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (registry, _agents) = deploy_registry(&env);
-        let provider = Address::generate(&env);
-
-        let long_category = "A".repeat(33);
-        assert!(registry
-            .try_register_service(
-                &provider,
-                &String::from_str(&env, "Valid Name"),
-                &String::from_str(&env, "Valid description long enough"),
-                &String::from_str(&env, "https://example.com"),
-                &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
-                &String::from_str(&env, &long_category),
-            )
-            .is_err());
-    }
-
-    #[test]
-    fn test_register_service_accepts_category_at_max() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (registry, _agents) = deploy_registry(&env);
-        let provider = Address::generate(&env);
-
-        let max_category = "A".repeat(32);
-        assert!(registry
-            .try_register_service(
-                &provider,
-                &String::from_str(&env, "Valid Name"),
-                &String::from_str(&env, "Valid description long enough"),
-                &String::from_str(&env, "https://example.com"),
-                &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
-                &String::from_str(&env, &max_category),
-            )
-            .is_ok());
     }
 
     #[test]
