@@ -56,7 +56,20 @@ cd contract/agents && stellar contract build
 
 ## CI
 
-All of the above run automatically on every PR and push to `main` via GitHub Actions (`.github/workflows/ci.yml`). Branch protection requiring all jobs to pass before merge is a planned follow-up.
+All of the above run automatically on every PR and push to `main` via GitHub Actions (`.github/workflows/ci.yml`).
+
+`main` is protected by the repository ruleset in `.github/rulesets/main-protection.json`. Before a PR can merge:
+
+- All four CI jobs must pass: `Contract build & test`, `Backend test`, `Frontend type-check & build`, and `Agent test`
+- At least one approving review is required
+- The branch must be up to date with `main`
+- Force pushes (and deletions) of `main` are blocked
+
+Maintainers apply or refresh that ruleset with:
+
+```bash
+./scripts/apply-main-branch-protection.sh
+```
 
 ## Code style
 
