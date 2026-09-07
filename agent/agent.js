@@ -8,8 +8,10 @@ const { Keypair } = pkg;
 import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { createEd25519Signer } from '@x402/stellar';
 import { ExactStellarScheme } from '@x402/stellar/exact/client';
+import { buildRunSummary, writeRunSummary } from './runSummary.js';
+import { stroopsToUsdcDisplay } from '../packages/stroops/index.js';
 
-// ── Config ────────────────────────────────────────────────────────────────────
+
 
 function loadSecret() {
   const envSecret = process.env.AGENT_STELLAR_SECRET;
@@ -76,9 +78,7 @@ try {
 }
 const AGENT_ADDRESS = agentKeypair.publicKey();
 
-// Zero the in-memory secret reference after key derivation.
-// JS strings are immutable, so this does not scrub the original bytes
-// from the heap, but removes the long-lived reference from this scope.
+
 AGENT_SECRET = undefined;
 
 const logger = pino({
@@ -136,7 +136,7 @@ export async function ensureRegistered() {
       currentScore = agent.score;
       const policy = data.policy;
       const dailyLimitUsdc = policy
-        ? (Number(BigInt(policy.max_per_day_stroops)) / 10_000_000).toFixed(2)
+        ? stroopsToUsdcDisplay(policy.max_per_day_stroops)
         : null;
       logger.info(
         { event: EVENT.AGENT_REGISTERED, agentAddress: AGENT_ADDRESS, score: agent.score, dailyLimitUsdc, scoringEnabled: true },
@@ -235,15 +235,9 @@ export function dispose() {
   logger.info('Shutting down Lodestar Agent');
 }
 
-const STROOPS_PER_USDC = 10_000_000;
-
-function stroopsToUsdcStr(stroops) {
-  return String(Number(stroops) / STROOPS_PER_USDC);
-}
-
-function usdcStrToStroops(usdcStr) {
-  return BigInt(Math.round(parseFloat(usdcStr) * STROOPS_PER_USDC));
-}
+// USDC <-> stroop conversion comes from the shared package so the agent and
+// the backend cannot disagree on rounding (#853). The previous local copies
+// used floating-point math and were removed.
 
 function buildHttpClient() {
   // Re-read the secret for the x402 signer since the module-level reference
@@ -331,7 +325,7 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
       { event: EVENT.TASK_START, category, servicesFound: 0 },
       'No services found for category'
     );
-    return { success: false, priceUsdc: null };
+    return { success: false, priceUsdc: null, servicesDiscovered: 0, servicesEligible: 0, attempts: 0, failureReason: 'no_services_found' };
   }
 
   const eligible = services.filter(s => s.reputation >= minReputation);
@@ -340,7 +334,14 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
       { event: EVENT.TASK_START, category, servicesFound: services.length, minReputation },
       'No services meet minimum reputation threshold'
     );
-    return { success: false, priceUsdc: null };
+    return {
+      success: false,
+      priceUsdc: null,
+      servicesDiscovered: services.length,
+      servicesEligible: 0,
+      attempts: 0,
+      failureReason: 'no_services_meet_min_reputation',
+    };
   }
 
   // Top-N candidates by reputation; weighted random selection reduces single-point manipulation.
@@ -458,7 +459,27 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
 
     await submitReputation(selected.id, true);
 
-    return { success: true, priceUsdc: selected.price_usdc };
+    return {
+      success: true,
+      priceUsdc: selected.price_usdc,
+      txHash,
+      servicesDiscovered: services.length,
+      servicesEligible: eligible.length,
+      attempts: attempt,
+      scoreAfter: currentScore,
+      durationMs: Date.now() - taskStart,
+      selection: {
+        serviceId: selected.id,
+        serviceName: selected.name,
+        reputation: selected.reputation,
+        priceUsdc: selected.price_usdc,
+        // Why this service: top-N by reputation, then reputation-weighted random
+        // pick among the candidates still untried.
+        strategy: 'reputation_weighted_random',
+        candidatesConsidered: candidates.length,
+        minReputation,
+      },
+    };
   }
 
   const taskDurationMs = Date.now() - taskStart;
@@ -466,7 +487,15 @@ export async function runTask(category, buildUrl, scoringEnabled, client = httpC
     { event: EVENT.PAYMENT_FAILED, category, servicesAttempted: failed.size, taskDurationMs },
     'All candidate services exhausted'
   );
-  return { success: false, priceUsdc: null };
+  return {
+    success: false,
+    priceUsdc: null,
+    servicesDiscovered: services.length,
+    servicesEligible: eligible.length,
+    attempts: failed.size,
+    durationMs: taskDurationMs,
+    failureReason: 'all_candidates_exhausted',
+  };
 }
 
 // ── Shutdown state ─────────────────────────────────────────────────────────────
@@ -534,15 +563,18 @@ export async function main() {
   let failCount = 0;
   let totalUsdcSpent = 0;
   const unresolvedPayments = [];
+  const taskResults = [];
 
   for (const { category, buildUrl } of tasks) {
     if (shuttingDown) {
       logger.warn({ event: 'shutdown_skip_task', category }, 'Skipping task due to shutdown');
       failCount++;
+      taskResults.push({ category, success: false, failureReason: 'skipped_due_to_shutdown' });
       continue;
     }
 
     const result = await runTask(category, buildUrl, scoringEnabled, httpClient);
+    taskResults.push({ category, ...result });
     if (result.success) {
       successCount++;
       totalUsdcSpent += parseFloat(result.priceUsdc ?? '0');
@@ -579,6 +611,23 @@ export async function main() {
     'Agent run complete'
   );
 
+  // Machine-readable artefact for downstream consumers, written on success and
+  // failure alike (#843).
+  writeRunSummary(
+    buildRunSummary({
+      agentAddress: AGENT_ADDRESS,
+      agentName: AGENT_NAME,
+      startedAt: runStart,
+      tasks: taskResults,
+      totalUsdcSpent,
+      scoreBefore: scoreAfterRegistration,
+      scoreAfter: finalScore,
+      unresolvedPayments,
+      shutdownInitiated: shuttingDown,
+    }),
+    { logger },
+  );
+
   if (shuttingDown) {
     await completeShutdown(shutdownSuccess, unresolvedPayments);
   }
@@ -595,6 +644,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   });
   main().catch((err) => {
     logger.error({ err }, 'Agent crashed');
+    // A crash is still a run outcome — emit the artefact before exiting (#843).
+    writeRunSummary(
+      buildRunSummary({
+        agentAddress: AGENT_ADDRESS,
+        agentName: AGENT_NAME,
+        startedAt: Date.now(),
+        tasks: [],
+        error: err,
+      }),
+      { logger },
+    );
     process.exit(1);
   });
 }

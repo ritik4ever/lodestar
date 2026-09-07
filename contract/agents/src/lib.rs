@@ -1,8 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, vec,
-    Address, Env, IntoVal, String, Symbol, Vec,
+    contract, contractimpl, contracttype, vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -59,6 +58,8 @@ pub struct AgentEntry {
     pub total_payments: u64,
     pub successful_payments: u64,
     pub failed_payments: u64,
+    /// Cumulative value (in stroops) of successful payments only. Failed
+    /// payments do not count toward volume since no value actually moved.
     pub total_volume_stroops: i128,
     pub registered_at: u64,
     pub last_active: u64,
@@ -100,10 +101,7 @@ pub struct LodestarAgents;
 impl LodestarAgents {
     /// Get the current daily spent amount and reset it if a new day has started.
     /// Returns (daily_spent_stroops, last_reset_ledger) for the current day.
-    fn get_daily_spend_with_reset(
-        env: &Env,
-        policy: &SpendingPolicy,
-    ) -> (i128, u64) {
+    fn get_daily_spend_with_reset(env: &Env, policy: &SpendingPolicy) -> (i128, u64) {
         let now = env.ledger().sequence() as u64;
         if now >= policy.last_reset_ledger + DAY_LEDGERS {
             (0i128, now)
@@ -139,6 +137,15 @@ impl LodestarAgents {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::RegistryContract, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "initialized"),
+                registry_contract.clone(),
+            ),
+            (registry_contract,),
+        );
     }
 
     /// Deploy-time setup: store the admin address for privileged operations.
@@ -159,7 +166,6 @@ impl LodestarAgents {
         description: String,
         owner: Address,
     ) -> u64 {
-
         let key = DataKey::Agent(agent_address.clone());
         if env.storage().persistent().has(&key) {
             panic!("agent already registered");
@@ -185,7 +191,9 @@ impl LodestarAgents {
         };
 
         env.storage().persistent().set(&key, &entry);
-        env.storage().persistent().extend_ttl(&key, MAX_TTL, MAX_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MAX_TTL, MAX_TTL);
 
         // Update agent IDs list
         let ids_key = DataKey::AgentIds;
@@ -202,11 +210,7 @@ impl LodestarAgents {
 
         // Update count
         let count_key = DataKey::AgentCount;
-        let count: u64 = env
-            .storage()
-            .persistent()
-            .get(&count_key)
-            .unwrap_or(0u64);
+        let count: u64 = env.storage().persistent().get(&count_key).unwrap_or(0u64);
         let new_count = count + 1;
         env.storage().persistent().set(&count_key, &new_count);
         env.storage()
@@ -216,18 +220,32 @@ impl LodestarAgents {
         // Default spending policy
         let policy = SpendingPolicy {
             agent_address: agent_address.clone(),
-            max_per_tx_stroops: 10_000_000_000i128,   // 1,000,000 USDC stroops
-            max_per_day_stroops: 100_000_000_000i128,  // 10,000,000 USDC stroops
+            max_per_tx_stroops: 10_000_000_000i128, // 1,000,000 USDC stroops
+            max_per_day_stroops: 100_000_000_000i128, // 10,000,000 USDC stroops
             allowed_categories: vec![&env],
             min_score_to_earn: 0,
             daily_spent_stroops: 0,
             last_reset_ledger: now,
         };
-        let policy_key = DataKey::Policy(agent_address);
+        let policy_key = DataKey::Policy(agent_address.clone());
         env.storage().persistent().set(&policy_key, &policy);
         env.storage()
             .persistent()
             .extend_ttl(&policy_key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "registered"),
+                agent_address,
+            ),
+            (
+                entry.owner.clone(),
+                entry.name.clone(),
+                entry.description.clone(),
+                entry.score,
+            ),
+        );
 
         new_count
     }
@@ -242,7 +260,11 @@ impl LodestarAgents {
     // Get spending policy with automatic daily reset
     pub fn get_policy(env: Env, agent_address: Address) -> Option<SpendingPolicy> {
         let key = DataKey::Policy(agent_address.clone());
-        if let Some(mut policy) = env.storage().persistent().get::<DataKey, SpendingPolicy>(&key) {
+        if let Some(mut policy) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, SpendingPolicy>(&key)
+        {
             let (daily_spent, last_reset) = Self::get_daily_spend_with_reset(&env, &policy);
             policy.daily_spent_stroops = daily_spent;
             policy.last_reset_ledger = last_reset;
@@ -279,13 +301,13 @@ impl LodestarAgents {
 
     // Check if a transaction is allowed under the spending policy
     // Returns true if allowed, false otherwise
-    pub fn check_spending_allowed(
-        env: Env,
-        agent_address: Address,
-        amount_stroops: i128,
-    ) -> bool {
+    pub fn check_spending_allowed(env: Env, agent_address: Address, amount_stroops: i128) -> bool {
         let key = DataKey::Policy(agent_address.clone());
-        let policy = match env.storage().persistent().get::<DataKey, SpendingPolicy>(&key) {
+        let policy = match env
+            .storage()
+            .persistent()
+            .get::<DataKey, SpendingPolicy>(&key)
+        {
             Some(p) => p,
             None => return false,
         };
@@ -352,12 +374,14 @@ impl LodestarAgents {
             .get(&policy_key)
             .expect("policy not found");
 
+        let old_score = agent.score;
+
         agent.total_payments += 1;
-        agent.total_volume_stroops += amount_stroops;
         agent.last_active = env.ledger().sequence() as u64;
 
         if success {
             agent.successful_payments += 1;
+            agent.total_volume_stroops += amount_stroops;
             // Enforce min_score_to_earn: agents below the threshold do not gain
             // score from successful payments, though payment stats are still recorded.
             if agent.score >= policy.min_score_to_earn {
@@ -367,6 +391,8 @@ impl LodestarAgents {
             agent.failed_payments += 1;
             agent.score = (agent.score + SCORE_FAILURE).max(0);
         }
+
+        let new_score = agent.score;
 
         env.storage().persistent().set(&agent_key, &agent);
         env.storage()
@@ -390,6 +416,22 @@ impl LodestarAgents {
         env.storage()
             .persistent()
             .extend_ttl(&policy_key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "payment"),
+                agent_address,
+            ),
+            (
+                service_id,
+                amount_stroops,
+                success,
+                old_score,
+                new_score,
+                caller,
+            ),
+        );
     }
 
     // Flag an agent (admin-only)
@@ -406,28 +448,41 @@ impl LodestarAgents {
             panic!("unauthorized");
         }
 
-        let key = DataKey::Agent(agent_address);
+        let key = DataKey::Agent(agent_address.clone());
         let mut agent: AgentEntry = env
             .storage()
             .persistent()
             .get(&key)
             .expect("agent not found");
 
+        let old_score = agent.score;
+
         agent.flagged = true;
-        agent.flag_reason = reason;
+        agent.flag_reason = reason.clone();
         agent.score = (agent.score + FLAG_PENALTY).max(0);
+
+        let new_score = agent.score;
 
         env.storage().persistent().set(&key, &agent);
         env.storage()
             .persistent()
             .extend_ttl(&key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "flagged"),
+                agent_address,
+            ),
+            (caller, reason, old_score, new_score),
+        );
     }
 
     // Deactivate agent (owner only)
     pub fn deactivate_agent(env: Env, agent_address: Address, caller: Address) {
         caller.require_auth();
 
-        let key = DataKey::Agent(agent_address);
+        let key = DataKey::Agent(agent_address.clone());
         let mut agent: AgentEntry = env
             .storage()
             .persistent()
@@ -443,10 +498,78 @@ impl LodestarAgents {
         env.storage()
             .persistent()
             .extend_ttl(&key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "deactivated"),
+                agent_address,
+            ),
+            (caller,),
+        );
     }
 
     // Admin deactivate agent (can deactivate any agent regardless of ownership)
     pub fn admin_deactivate_agent(env: Env, agent_address: Address, caller: Address) {
+        caller.require_auth();
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("admin not set — call initialize() first");
+
+        if caller != admin {
+            panic!("unauthorized");
+        }
+
+        let key = DataKey::Agent(agent_address.clone());
+        let mut agent: AgentEntry = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .expect("agent not found");
+
+        agent.active = false;
+        env.storage().persistent().set(&key, &agent);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "deactivated"),
+                agent_address,
+            ),
+            (caller,),
+        );
+    }
+
+    // Reactivate agent (owner only)
+    pub fn reactivate_agent(env: Env, agent_address: Address, caller: Address) {
+        caller.require_auth();
+
+        let key = DataKey::Agent(agent_address);
+        let mut agent: AgentEntry = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .expect("agent not found");
+
+        if agent.owner != caller {
+            panic!("unauthorized");
+        }
+
+        agent.active = true;
+        env.storage().persistent().set(&key, &agent);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, MAX_TTL, MAX_TTL);
+    }
+
+    // Admin reactivate agent (can reactivate any agent regardless of ownership)
+    pub fn admin_reactivate_agent(env: Env, agent_address: Address, caller: Address) {
         caller.require_auth();
 
         let admin: Address = env
@@ -466,7 +589,7 @@ impl LodestarAgents {
             .get(&key)
             .expect("agent not found");
 
-        agent.active = false;
+        agent.active = true;
         env.storage().persistent().set(&key, &agent);
         env.storage()
             .persistent()
@@ -495,12 +618,19 @@ impl LodestarAgents {
             panic!("unauthorized");
         }
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Admin, &new_admin);
+        env.storage().persistent().set(&DataKey::Admin, &new_admin);
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Admin, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "admin_transferred"),
+                new_admin.clone(),
+            ),
+            (caller, new_admin),
+        );
     }
 
     // List agents (paginated by limit)
@@ -596,10 +726,10 @@ impl LodestarAgents {
             .unwrap_or((0i128, now));
 
         let policy = SpendingPolicy {
-            agent_address,
+            agent_address: agent_address.clone(),
             max_per_tx_stroops,
             max_per_day_stroops,
-            allowed_categories,
+            allowed_categories: allowed_categories.clone(),
             min_score_to_earn,
             daily_spent_stroops: daily_spent,
             last_reset_ledger: last_reset,
@@ -609,10 +739,25 @@ impl LodestarAgents {
         env.storage()
             .persistent()
             .extend_ttl(&policy_key, MAX_TTL, MAX_TTL);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "policy_updated"),
+                agent_address,
+            ),
+            (
+                caller,
+                max_per_tx_stroops,
+                max_per_day_stroops,
+                allowed_categories,
+                min_score_to_earn,
+            ),
+        );
     }
 
     // Get the current scoring configuration constants
-    pub fn get_scoring_config(env: Env) -> ScoringConfig {
+    pub fn get_scoring_config(_env: Env) -> ScoringConfig {
         ScoringConfig {
             initial_score: INITIAL_SCORE,
             score_success: SCORE_SUCCESS,
@@ -625,17 +770,48 @@ impl LodestarAgents {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::testutils::Ledger as _;
+    use soroban_sdk::{
+        testutils::{Address as _, Events, Ledger as _},
+        vec, Address, FromVal, IntoVal, String, Symbol, Vec,
+    };
 
     // Mock registry contract for testing
     #[contract]
     pub struct MockRegistry;
 
+    #[contracttype]
+    #[derive(Clone)]
+    pub enum MockDataKey {
+        Provider,
+    }
+
     #[contractimpl]
     impl MockRegistry {
+        pub fn set_provider(env: Env, provider: Address) {
+            env.storage()
+                .persistent()
+                .set(&MockDataKey::Provider, &provider);
+            env.storage().persistent().extend_ttl(
+                &MockDataKey::Provider,
+                TEST_MAX_TTL,
+                TEST_MAX_TTL,
+            );
+        }
+
+        pub fn set_service(env: Env, id: u64, provider: Address) {
+            env.storage().persistent().set(&id, &provider);
+            env.storage()
+                .persistent()
+                .extend_ttl(&id, TEST_MAX_TTL, TEST_MAX_TTL);
+        }
+
         pub fn get_service(env: Env, id: u64) -> ServiceEntry {
-            // Return a mock service with a generated provider
+            let provider: Address = env
+                .storage()
+                .persistent()
+                .get::<u64, Address>(&id)
+                .or_else(|| env.storage().persistent().get(&MockDataKey::Provider))
+                .unwrap_or_else(|| Address::generate(&env));
             ServiceEntry {
                 id,
                 name: String::from_str(&env, "Test Service"),
@@ -643,7 +819,7 @@ mod test {
                 endpoint: String::from_str(&env, "http://test.com"),
                 price_usdc: String::from_str(&env, "100"),
                 category: String::from_str(&env, "test"),
-                provider: Address::generate(&env),
+                provider,
                 reputation: 100,
                 active: true,
                 registered_at: env.ledger().sequence() as u64,
@@ -663,17 +839,26 @@ mod test {
 
     fn setup_with_registry(env: &Env) -> (Address, Address) {
         // Deploy mock registry
-        let registry_id = env.register_contract(None, MockRegistry);
-        
+        let registry_id = env.register(MockRegistry, ());
+
         // Deploy agents contract with admin
         let admin = Address::generate(env);
         let contract_id = env.register(LodestarAgents, (admin.clone(),));
         let client = LodestarAgentsClient::new(env, &contract_id);
-        
+
         // Initialize with registry
         client.init(&registry_id);
-        
+
         (contract_id, admin)
+    }
+
+    fn setup_with_mock_registry(env: &Env) -> (Address, Address, Address) {
+        let registry_id = env.register(MockRegistry, ());
+        let admin = Address::generate(env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(env, &contract_id);
+        client.init(&registry_id);
+        (contract_id, admin, registry_id)
     }
 
     #[test]
@@ -709,11 +894,7 @@ mod test {
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
         assert!(client
-            .try_flag_agent(
-                &agent_addr,
-                &String::from_str(&env, "bad behavior"),
-                &owner,
-            )
+            .try_flag_agent(&agent_addr, &String::from_str(&env, "bad behavior"), &owner,)
             .is_err());
     }
 
@@ -840,11 +1021,7 @@ mod test {
 
         let caller = Address::generate(&env);
         assert!(client
-            .try_flag_agent(
-                &agent_addr,
-                &String::from_str(&env, "reason"),
-                &caller,
-            )
+            .try_flag_agent(&agent_addr, &String::from_str(&env, "reason"), &caller,)
             .is_err());
     }
 
@@ -864,11 +1041,7 @@ mod test {
         // Clear auths so require_auth in flag_agent fails
         env.set_auths(&[]);
         assert!(client
-            .try_flag_agent(
-                &agent_addr,
-                &String::from_str(&env, "reason"),
-                &admin,
-            )
+            .try_flag_agent(&agent_addr, &String::from_str(&env, "reason"), &admin,)
             .is_err());
     }
 
@@ -943,15 +1116,32 @@ mod test {
         });
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Seed non-zero daily spend so a reset is detectable
         let seeded_spend = 500i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            seeded_spend,
+            max_per_day,
+        );
 
         // Confirm seed is in storage
         let p = client.get_policy(&agent_addr).unwrap();
-        assert_eq!(p.daily_spent_stroops, seeded_spend, "seed should be in storage");
+        assert_eq!(
+            p.daily_spent_stroops, seeded_spend,
+            "seed should be in storage"
+        );
         assert_eq!(p.last_reset_ledger, start_ledger as u64);
 
         // ── One ledger BEFORE threshold — spend must be preserved ──────────
@@ -1009,11 +1199,25 @@ mod test {
         });
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Seed non-zero daily spend
         let seeded_spend = 300i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            seeded_spend,
+            max_per_day,
+        );
 
         // ── One before threshold: no reset ──────────────────────────────────
         let one_before = start_ledger + DAY_LEDGERS as u32 - 1;
@@ -1070,11 +1274,25 @@ mod test {
         });
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Seed non-zero spend
         let seeded_spend = 400i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            seeded_spend,
+            max_per_day,
+        );
 
         let p = client.get_policy(&agent_addr).unwrap();
         assert_eq!(p.daily_spent_stroops, seeded_spend);
@@ -1087,7 +1305,14 @@ mod test {
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
         let p_mid = client.get_policy(&agent_addr).unwrap();
         assert_eq!(
             p_mid.daily_spent_stroops, seeded_spend,
@@ -1102,7 +1327,14 @@ mod test {
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         let p_after = client.get_policy(&agent_addr).unwrap();
         assert_eq!(
@@ -1137,7 +1369,14 @@ mod test {
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Confirm initial last_reset_ledger = start_ledger (register_agent and
         // update_policy both run at start_ledger = 1)
@@ -1146,7 +1385,14 @@ mod test {
 
         // Seed spend for day 1
         let spend_day1 = 200i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, spend_day1, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            spend_day1,
+            max_per_day,
+        );
 
         // ── Day 2: first DAY_LEDGERS boundary ───────────────────────────────
         let day2_ledger = start_ledger + DAY_LEDGERS as u32;
@@ -1170,12 +1416,17 @@ mod test {
         let key = DataKey::Policy(agent_addr.clone());
         env.as_contract(&contract_id, || {
             let current: SpendingPolicy = env.storage().persistent().get(&key).unwrap();
-            env.storage().persistent().set(&key, &SpendingPolicy {
-                daily_spent_stroops: 150i128,
-                last_reset_ledger: day2_ledger as u64,
-                ..current
-            });
-            env.storage().persistent().extend_ttl(&key, TEST_MAX_TTL, TEST_MAX_TTL);
+            env.storage().persistent().set(
+                &key,
+                &SpendingPolicy {
+                    daily_spent_stroops: 150i128,
+                    last_reset_ledger: day2_ledger as u64,
+                    ..current
+                },
+            );
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TEST_MAX_TTL, TEST_MAX_TTL);
         });
 
         // ── Day 3: second DAY_LEDGERS boundary ──────────────────────────────
@@ -1215,11 +1466,25 @@ mod test {
         });
 
         let max_per_day = 1000i128;
-        client.update_policy(&agent_addr, &1000i128, &max_per_day, &vec![&env], &0, &owner);
+        client.update_policy(
+            &agent_addr,
+            &1000i128,
+            &max_per_day,
+            &vec![&env],
+            &0,
+            &owner,
+        );
 
         // Seed non-zero spend
         let seeded_spend = 750i128;
-        seed_daily_spent(&env, &contract_id, &agent_addr, &owner, seeded_spend, max_per_day);
+        seed_daily_spent(
+            &env,
+            &contract_id,
+            &agent_addr,
+            &owner,
+            seeded_spend,
+            max_per_day,
+        );
 
         // Advance to exactly one ledger before the threshold — must NOT reset
         let one_before = start_ledger + DAY_LEDGERS as u32 - 1;
@@ -1263,8 +1528,8 @@ mod test {
         setup_agent(&env, &contract_id, &agent_addr, &owner);
 
         let max_per_day = 1000i128;
-        let max_per_tx = 1000i128; 
-        
+        let max_per_tx = 1000i128;
+
         env.ledger().with_mut(|li| {
             li.sequence_number = 1;
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
@@ -1291,8 +1556,533 @@ mod test {
             li.min_persistent_entry_ttl = TEST_MAX_TTL;
             li.min_temp_entry_ttl = TEST_MAX_TTL;
         });
-        
+
         // Should allow full amount again after reset
         assert!(client.check_spending_allowed(&agent_addr, &1000));
+    }
+
+    /// A failed payment must not inflate `total_volume_stroops` — no value moved.
+    #[test]
+    fn test_failed_payment_does_not_count_toward_volume() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin) = setup_with_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        // Set a fixed provider on the mock registry so record_payment auth passes
+        let provider = Address::generate(&env);
+        let registry_id = env.as_contract(&contract_id, || {
+            env.storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::RegistryContract)
+                .expect("registry contract not set")
+        });
+        let mock_client = MockRegistryClient::new(&env, &registry_id);
+        mock_client.set_provider(&provider);
+
+        // Record a failed payment
+        client.record_payment(&agent_addr, &1u64, &500i128, &false, &provider);
+
+        let agent = client.get_agent(&agent_addr).unwrap();
+        assert_eq!(
+            agent.total_volume_stroops, 0,
+            "failed payment must not count toward volume"
+        );
+        assert_eq!(agent.failed_payments, 1);
+        assert_eq!(agent.total_payments, 1);
+    }
+
+    #[test]
+    fn test_init_emits_event() {
+        let env = Env::default();
+        let registry_id = env.register(MockRegistry, ());
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin,));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        client.init(&registry_id);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "initialized"),
+                registry_id.clone(),
+            )
+                .into_val(&env)
+        );
+        assert_eq!(<(Address,)>::from_val(&env, &event.2), (registry_id,));
+    }
+
+    #[test]
+    fn test_register_agent_emits_event() {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin,));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let name = String::from_str(&env, "Agent Alpha");
+        let description = String::from_str(&env, "Autonomous trading agent");
+
+        client.register_agent(&agent_addr, &name, &description, &owner);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "registered"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        assert_eq!(
+            <(Address, String, String, i32)>::from_val(&env, &event.2),
+            (owner, name, description, INITIAL_SCORE)
+        );
+    }
+
+    #[test]
+    fn test_record_payment_success_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin, registry_id) = setup_with_mock_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+        let service_id = 42u64;
+        let provider = Address::generate(&env);
+        let mock_client = MockRegistryClient::new(&env, &registry_id);
+        mock_client.set_service(&service_id, &provider);
+
+        let initial_events_count = env.events().all().len();
+
+        let amount = 5_000_000i128;
+        client.record_payment(&agent_addr, &service_id, &amount, &true, &provider);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), initial_events_count + 1);
+        let event = events.get(events.len() - 1).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "payment"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        assert_eq!(
+            <(u64, i128, bool, i32, i32, Address)>::from_val(&env, &event.2),
+            (
+                service_id,
+                amount,
+                true,
+                INITIAL_SCORE,
+                INITIAL_SCORE + SCORE_SUCCESS,
+                provider
+            )
+        );
+    }
+
+    #[test]
+    fn test_record_payment_failure_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin, registry_id) = setup_with_mock_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        let service_id = 1u64;
+        let provider = Address::generate(&env);
+        let mock_client = MockRegistryClient::new(&env, &registry_id);
+        mock_client.set_service(&service_id, &provider);
+
+        let amount = 1_000_000i128;
+        client.record_payment(&agent_addr, &service_id, &amount, &false, &provider);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "payment"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        assert_eq!(
+            <(u64, i128, bool, i32, i32, Address)>::from_val(&env, &event.2),
+            (
+                service_id,
+                amount,
+                false,
+                INITIAL_SCORE,
+                INITIAL_SCORE + SCORE_FAILURE,
+                provider
+            )
+        );
+    }
+
+    #[test]
+    fn test_record_payment_min_score_to_earn_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, _admin, registry_id) = setup_with_mock_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        // Require score >= 500 to earn score increases (agent currently has 100)
+        client.update_policy(
+            &agent_addr,
+            &10_000_000_000i128,
+            &100_000_000_000i128,
+            &vec![&env],
+            &500,
+            &owner,
+        );
+
+        let service_id = 7u64;
+        let provider = Address::generate(&env);
+        let mock_client = MockRegistryClient::new(&env, &registry_id);
+        mock_client.set_service(&service_id, &provider);
+
+        let amount = 2_000_000i128;
+        client.record_payment(&agent_addr, &service_id, &amount, &true, &provider);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "payment"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        // Score unchanged at 100 because min_score_to_earn (500) was not met
+        assert_eq!(
+            <(u64, i128, bool, i32, i32, Address)>::from_val(&env, &event.2),
+            (service_id, amount, true, 100i32, 100i32, provider)
+        );
+    }
+
+    #[test]
+    fn test_flag_agent_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        let reason = String::from_str(&env, "Fraudulent activity detected");
+        client.flag_agent(&agent_addr, &reason, &admin);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "flagged"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        // Initial score 100 + (-200) clamped to 0
+        assert_eq!(
+            <(Address, String, i32, i32)>::from_val(&env, &event.2),
+            (admin, reason, 100i32, 0i32)
+        );
+    }
+
+    #[test]
+    fn test_deactivate_agent_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin,));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        client.deactivate_agent(&agent_addr, &owner);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "deactivated"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        assert_eq!(<(Address,)>::from_val(&env, &event.2), (owner,));
+    }
+
+    #[test]
+    fn test_admin_deactivate_agent_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        client.admin_deactivate_agent(&agent_addr, &admin);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "deactivated"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        assert_eq!(<(Address,)>::from_val(&env, &event.2), (admin,));
+    }
+
+    #[test]
+    fn test_transfer_admin_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin.clone(),));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let new_admin = Address::generate(&env);
+        client.transfer_admin(&new_admin, &admin);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "admin_transferred"),
+                new_admin.clone(),
+            )
+                .into_val(&env)
+        );
+        assert_eq!(
+            <(Address, Address)>::from_val(&env, &event.2),
+            (admin, new_admin)
+        );
+    }
+
+    #[test]
+    fn test_update_policy_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(LodestarAgents, (admin,));
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        setup_agent(&env, &contract_id, &agent_addr, &owner);
+
+        let mut categories = Vec::new(&env);
+        categories.push_back(String::from_str(&env, "finance"));
+        categories.push_back(String::from_str(&env, "analytics"));
+
+        let max_tx = 50_000_000i128;
+        let max_day = 500_000_000i128;
+        let min_score = 300i32;
+
+        client.update_policy(
+            &agent_addr,
+            &max_tx,
+            &max_day,
+            &categories,
+            &min_score,
+            &owner,
+        );
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "policy_updated"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        assert_eq!(
+            <(Address, i128, i128, Vec<String>, i32)>::from_val(&env, &event.2),
+            (owner, max_tx, max_day, categories, min_score)
+        );
+    }
+
+    #[test]
+    fn test_score_history_reconstruction_from_events() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (contract_id, admin, registry_id) = setup_with_mock_registry(&env);
+        let client = LodestarAgentsClient::new(&env, &contract_id);
+
+        let agent_addr = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let mock_client = MockRegistryClient::new(&env, &registry_id);
+
+        let provider1 = Address::generate(&env);
+        let provider2 = Address::generate(&env);
+        mock_client.set_service(&101u64, &provider1);
+        mock_client.set_service(&102u64, &provider2);
+
+        let mut reconstructed_scores: Vec<i32> = vec![&env];
+
+        // 1. Register agent -> initial score 100
+        client.register_agent(
+            &agent_addr,
+            &String::from_str(&env, "Reconstruction Agent"),
+            &String::from_str(&env, "Agent to test score reconstruction"),
+            &owner,
+        );
+        let reg_events = env.events().all();
+        assert_eq!(reg_events.len(), 1);
+        let reg_event = reg_events.get(0).unwrap();
+        assert_eq!(
+            reg_event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "registered"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        let reg_data = <(Address, String, String, i32)>::from_val(&env, &reg_event.2);
+        reconstructed_scores.push_back(reg_data.3);
+        assert_eq!(client.get_score(&agent_addr), 100);
+
+        // 2. Successful payment 1 (+10) -> score 110
+        client.record_payment(&agent_addr, &101u64, &1_000_000i128, &true, &provider1);
+        let pay1_events = env.events().all();
+        assert_eq!(pay1_events.len(), 1);
+        let pay1_event = pay1_events.get(0).unwrap();
+        assert_eq!(
+            pay1_event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "payment"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        let pay1_data = <(u64, i128, bool, i32, i32, Address)>::from_val(&env, &pay1_event.2);
+        assert_eq!(pay1_data.3, 100); // old_score
+        assert_eq!(pay1_data.4, 110); // new_score
+        reconstructed_scores.push_back(pay1_data.4);
+        assert_eq!(client.get_score(&agent_addr), 110);
+
+        // 3. Successful payment 2 (+10) -> score 120
+        client.record_payment(&agent_addr, &102u64, &2_000_000i128, &true, &provider2);
+        let pay2_events = env.events().all();
+        assert_eq!(pay2_events.len(), 1);
+        let pay2_event = pay2_events.get(0).unwrap();
+        assert_eq!(
+            pay2_event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "payment"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        let pay2_data = <(u64, i128, bool, i32, i32, Address)>::from_val(&env, &pay2_event.2);
+        assert_eq!(pay2_data.3, 110); // old_score
+        assert_eq!(pay2_data.4, 120); // new_score
+        reconstructed_scores.push_back(pay2_data.4);
+        assert_eq!(client.get_score(&agent_addr), 120);
+
+        // 4. Failed payment 1 (-25) -> score 95
+        client.record_payment(&agent_addr, &101u64, &500_000i128, &false, &provider1);
+        let pay3_events = env.events().all();
+        assert_eq!(pay3_events.len(), 1);
+        let pay3_event = pay3_events.get(0).unwrap();
+        assert_eq!(
+            pay3_event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "payment"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        let pay3_data = <(u64, i128, bool, i32, i32, Address)>::from_val(&env, &pay3_event.2);
+        assert_eq!(pay3_data.3, 120); // old_score
+        assert_eq!(pay3_data.4, 95); // new_score
+        reconstructed_scores.push_back(pay3_data.4);
+        assert_eq!(client.get_score(&agent_addr), 95);
+
+        // 5. Admin flag agent (-200, clamped to 0) -> score 0
+        client.flag_agent(
+            &agent_addr,
+            &String::from_str(&env, "Policy breach"),
+            &admin,
+        );
+        let flag_events = env.events().all();
+        assert_eq!(flag_events.len(), 1);
+        let flag_event = flag_events.get(0).unwrap();
+        assert_eq!(
+            flag_event.1,
+            (
+                Symbol::new(&env, "agents"),
+                Symbol::new(&env, "flagged"),
+                agent_addr.clone(),
+            )
+                .into_val(&env)
+        );
+        let flag_data = <(Address, String, i32, i32)>::from_val(&env, &flag_event.2);
+        assert_eq!(flag_data.2, 95); // old_score
+        assert_eq!(flag_data.3, 0); // new_score
+        reconstructed_scores.push_back(flag_data.3);
+        assert_eq!(client.get_score(&agent_addr), 0);
+
+        assert_eq!(reconstructed_scores, vec![&env, 100, 110, 120, 95, 0]);
     }
 }

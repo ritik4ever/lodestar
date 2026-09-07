@@ -389,6 +389,17 @@ describe('POST /api/registry/prepare-register', () => {
         providerAddress: VALID_PROVIDER,
       },
     ],
+    [
+      'endpoint (too long)',
+      {
+        name: 'Weather Oracle',
+        description: 'Real-time weather data for autonomous agents.',
+        endpoint: 'https://example.com/' + 'A'.repeat(245),
+        priceUsdc: '0.001',
+        category: 'weather',
+        providerAddress: VALID_PROVIDER,
+      },
+    ],
   ])('rejects invalid registration %s before building XDR', async (_field, body) => {
     const res = await request(app)
       .post('/api/registry/prepare-register')

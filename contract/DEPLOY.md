@@ -133,6 +133,20 @@ registers as an agent. Set `NEXT_PUBLIC_DEMO_AGENT_ADDRESS` (frontend) to that
 address. To let other pre-funded demo agents vote, add their secrets to
 `DEMO_VOTER_SECRETS` (backend).
 
+## Registry Events
+
+The registry emits one event after each successful public service mutation. The
+first two topic values are symbols; the third topic value is the service ID.
+
+| Action | Topics | Data |
+| --- | --- | --- |
+| Register | `("registry", "registered", service_id)` | `(provider, name, description, endpoint, category, price_usdc, pay_to)` |
+| Reputation update | `("registry", "reputation", service_id)` | `(caller, positive, reputation)` |
+| Deactivate | `("registry", "deactivated", service_id)` | `(provider)` |
+
+Indexers can use the action symbol in the second topic to distinguish events
+and should treat the data tuple as the action-specific schema shown above.
+
 ## 9. Run seed script
 
 ```sh
@@ -173,6 +187,21 @@ cd backend && npm run seed-agents
 ```
 
 This registers three demo agents (NewAgent ~110, EstablishedAgent ~600, TrustedAgent ~1000) and builds their payment histories on-chain.
+
+## Registration Field Limits
+
+The `register_service` function enforces the following field limits on-chain:
+
+| Field | Min | Max | Notes |
+|-------|-----|-----|-------|
+| `name` | 3 | 64 | |
+| `description` | 10 | 256 | |
+| `endpoint` | — | 256 | |
+| `category` | 1 | 32 | |
+
+Submissions exceeding these limits are rejected with a typed assertion error.
+The same limits are enforced client-side in the RegisterForm and server-side
+by the `POST /api/registry/prepare-register` route.
 
 ## Network Details
 
