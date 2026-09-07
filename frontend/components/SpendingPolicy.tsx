@@ -9,8 +9,8 @@ const ALL_CATEGORIES: Category[] = ['search', 'weather', 'finance', 'ai', 'data'
 
 function stroopsToUsdc(stroops: string): string {
   const n = Number(stroops) / STROOPS_PER_USDC;
-  // toFixed(4) then strip trailing zeros, keep at least one decimal if fractional
-  const fixed = n.toFixed(4);
+  // toFixed(7) preserves stroop-level precision, strip trailing zeros afterwards.
+  const fixed = n.toFixed(7);
   const trimmed = fixed.replace(/0+$/, '').replace(/\.$/, '');
   return trimmed.includes('.') ? trimmed : Number(trimmed).toLocaleString();
 }

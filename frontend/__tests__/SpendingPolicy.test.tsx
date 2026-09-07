@@ -13,19 +13,35 @@ const mockPolicy: SpendingPolicy = {
   last_reset_ledger: '500000',
 };
 
-describe('SpendingPolicyDisplay', () => {
-  it('renders policy details in read mode', () => {
+describe('SpendingPolicyDisplay', ()=> {
+  it('renders policy details in read mode', ()=> {
     render(<SpendingPolicyDisplay policy={mockPolicy} />);
-    expect(screen.getByText('Spending Policy')).toBeInTheDocument();
-    // 1000000 stroops = 0.1 USDC, 10000000 stroops = 1 USDC, 500000 stroops = 0.05 USDC
-    expect(screen.getByText('$0.1 USDC')).toBeInTheDocument();
-    expect(screen.getByText('$1 USDC')).toBeInTheDocument();
-    expect(screen.getByText('$0.05 / $1 USDC')).toBeInTheDocument();
-    expect(screen.getByText('100')).toBeInTheDocument();
-    expect(screen.getByText('search, weather')).toBeInTheDocument();
+    expect(screen.getByText('Spending Policy')).toBeIntheDocument();
+    // 1000000 stroops = 0.10 USDC, 10000000 stroops = 1.00 USDC, 500000 stroops = 0.05 USDC
+    expect(screen.getByText('$0.10 USDC')).toBeInDocument();
+    expect(screen.getByText('$1.00 USDC')).toBeInDocument();
+    expect(screen.getByText('$0.05 / $1.00 USDC')).toBeInDocument();
+    expect(screen.getByText('100')).toBeInDocument();
+    expect(screen.getByText('search, weather')).toBeInDocument();
   });
 
-  it('does not show Edit button when wallet is not the owner', () => {
+  it('displays fractional USDC amounts with two decimal places', ()=> {
+    const fractionalPolicy: SpendingPolicy = {
+      agent_address: 'GTESTADDRESS',
+      max_per_tx_stroops: '1500000', // 0.15 USDC
+      max_per_day_stroops: '15000000', // 1.50 USDC
+      allowed_categories: ['search'],
+      min_score_to_earn: 100,
+      daily_spent_stroops: '0',
+      last_reset_ledger: '500000',
+    };
+    render(<SpendingPolicyDisplay policy={fractionalPolicy} />);
+    expect(screen.getByText('$0.15 USDC')).toBeInDocument();
+    expect(screen.getByText('$1.50 USDC')).toBeInDocument();
+    expect(screen.getByText('$0.00 / $1.50 USDC')).toBeInDocument();
+  });
+
+  it('does not show Edit button when wallet is not the owner', ()=> {
     render(
       <SpendingPolicyDisplay
         policy={mockPolicy}
@@ -33,10 +49,10 @@ describe('SpendingPolicyDisplay', () => {
         agentOwner="GOTHER"
       />,
     );
-    expect(screen.queryByText('Edit')).not.toBeInTheDocument();
+    expect(screen.queryByText('Edit')).not.toBeInDocument();
   });
 
-  it('shows Edit button when wallet matches owner', () => {
+  it('shows Edit button when wallet matches owner', ()=> {
     render(
       <SpendingPolicyDisplay
         policy={mockPolicy}
@@ -44,10 +60,10 @@ describe('SpendingPolicyDisplay', () => {
         agentOwner="GOWNER"
       />,
     );
-    expect(screen.getByText('Edit')).toBeInTheDocument();
+    expect(screen.getByText('Edit')).toBeIntheDocument();
   });
 
-  it('enters edit mode and shows form inputs', async () => {
+  it('enters edit mode and shows form inputs', async ()=> {
     render(
       <SpendingPolicyDisplay
         policy={mockPolicy}
@@ -58,16 +74,16 @@ describe('SpendingPolicyDisplay', () => {
 
     fireEvent.click(screen.getByText('Edit'));
 
-    expect(screen.getByText('Save changes')).toBeInTheDocument();
-    expect(screen.getByText('Cancel')).toBeInTheDocument();
+    expect(screen.getByText('Save changes')).toBeIntheDocument();
+    expect(screen.getByText('Cancel')).toBeIntheDocument();
 
     // Category buttons should be visible
-    expect(screen.getByText('search')).toBeInTheDocument();
-    expect(screen.getByText('weather')).toBeInTheDocument();
-    expect(screen.getByText('finance')).toBeInTheDocument();
+    expect(screen.getByText('search')).toBeInDocument();
+    expect(screen.getByText('weather')).toBeInDocument();
+    expect(screen.getByText('finance')).toBeIntheDocument();
   });
 
-  it('cancels edit mode and returns to read mode', async () => {
+  it('cancels edit mode and returns to read mode', async ()=> {
     render(
       <SpendingPolicyDisplay
         policy={mockPolicy}
@@ -79,12 +95,12 @@ describe('SpendingPolicyDisplay', () => {
     fireEvent.click(screen.getByText('Edit'));
     fireEvent.click(screen.getByText('Cancel'));
 
-    expect(screen.queryByText('Save changes')).not.toBeInTheDocument();
-    expect(screen.getByText('Edit')).toBeInTheDocument();
+    expect(screen.queryByText('Save changes')).not.toBeInDocument();
+    expect(screen.getByText('Edit')).toBeIntheDocument();
   });
 
-  it('calls onUpdate with correct params on submit', async () => {
-    const onUpdate = jest.fn().mockResolvedValue(undefined);
+  it('calls onUpdate with correct params on submit', async ()=> {
+    const onUpdate = jest.fn().mockResolved(undefined);
 
     render(
       <SpendingPolicyDisplay
@@ -110,7 +126,7 @@ describe('SpendingPolicyDisplay', () => {
     });
   });
 
-  it('toggles category selection in edit mode', () => {
+  it('toggles category selection in edit mode', ()=> {
     render(
       <SpendingPolicyDisplay
         policy={mockPolicy}
@@ -131,6 +147,6 @@ describe('SpendingPolicyDisplay', () => {
 
     // Now search should be deselected and finance selected
     // Category count should still be 2
-    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    expect(screen.getByText('2 selected')).toBeIntheDocument();
   });
-});
+}
