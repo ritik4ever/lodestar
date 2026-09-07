@@ -66,7 +66,7 @@ body {
   }
 
   .input {
-    @apply bg-background border border-border rounded-lg px-4 py-2.5 text-sm text-primary placeholder:text-secondary focus:outline-none focus:ring-1 focus:ring-primary/30 transition-shadow;
+    @apply bg-background border border-border rounded-lg px-4 py-2.5 text-sm text-primary placeholder:text-secondary focus:outline-none focus:ring-1 focus:ring-primary transition-shadow;
   }
 }
 
