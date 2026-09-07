@@ -157,6 +157,25 @@ SEEDING_MODE=true node scripts/seed.js
 
 This pre-populates the registry with demo services.
 
+## Registry Error Codes
+
+The registry contract returns typed `RegistryError` values for application-level
+failures. These discriminants are stable API surface and must not be reordered:
+
+| Numeric code | Variant | Backend code | Meaning |
+| --- | --- | --- | --- |
+| 1 | `InvalidName` | `INVALID_NAME` | Service name is outside the 3-64 character range. |
+| 2 | `InvalidDescription` | `INVALID_DESCRIPTION` | Service description is outside the 10-256 character range. |
+| 3 | `DuplicateActiveService` | `DUPLICATE_SERVICE` | The provider already has an active service with the same endpoint. |
+| 4 | `ServiceNotFound` | `SERVICE_NOT_FOUND` | The requested service id does not exist. |
+| 5 | `AgentsContractNotConfigured` | `AGENTS_CONTRACT_NOT_CONFIGURED` | Registry storage is missing the configured agents contract address. |
+| 6 | `CallerNotRegisteredAgent` | `CALLER_NOT_REGISTERED_AGENT` | The reputation voter is not registered in the agents contract. |
+| 7 | `ReputationVoteCooldown` | `REPUTATION_VOTE_COOLDOWN` | The same agent voted on the same service too recently. |
+| 8 | `ProviderMismatch` | `PROVIDER_MISMATCH` | A non-provider attempted to deactivate the service. |
+| 9 | `CategoryIndexNotFound` | `CATEGORY_INDEX_NOT_FOUND` | Registry storage is missing the service category index. |
+| 10 | `InvalidEndpoint` | `INVALID_ENDPOINT` | Service endpoint is longer than 256 characters. |
+| 11 | `InvalidCategory` | `INVALID_CATEGORY` | Service category is unsupported or outside the 1-32 character range. |
+
 ## 10. (Optional) Set demo agent secrets
 
 Generate three funded testnet keypairs for richer seed data:
@@ -199,7 +218,7 @@ The `register_service` function enforces the following field limits on-chain:
 | `endpoint` | — | 256 | |
 | `category` | 1 | 32 | |
 
-Submissions exceeding these limits are rejected with a typed assertion error.
+Submissions outside these limits are rejected with typed `RegistryError` values.
 The same limits are enforced client-side in the RegisterForm and server-side
 by the `POST /api/registry/prepare-register` route.
 

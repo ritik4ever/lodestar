@@ -12,7 +12,7 @@
 //! rejects, and record the invocation cost.
 
 use lodestar_agents::{LodestarAgents, LodestarAgentsClient};
-use lodestar_registry::{LodestarRegistry, LodestarRegistryClient};
+use lodestar_registry::{LodestarRegistry, LodestarRegistryClient, RegistryError};
 const VOTE_COOLDOWN_LEDGERS: u32 = 720;
 
 use soroban_sdk::{
@@ -21,7 +21,13 @@ use soroban_sdk::{
 };
 
 /// Deploy the real agents contract and the real registry wired to it.
-fn deploy_both(env: &Env) -> (LodestarRegistryClient<'static>, LodestarAgentsClient<'static>, Address) {
+fn deploy_both(
+    env: &Env,
+) -> (
+    LodestarRegistryClient<'static>,
+    LodestarAgentsClient<'static>,
+    Address,
+) {
     let admin = Address::generate(env);
 
     let agents_id = env.register(LodestarAgents, (admin.clone(),));
@@ -82,7 +88,6 @@ fn registry_accepts_a_vote_from_an_agent_registered_in_the_real_contract() {
 }
 
 #[test]
-#[should_panic(expected = "unauthorized: caller is not a registered agent")]
 fn registry_rejects_a_vote_when_the_real_agents_contract_says_no() {
     let env = Env::default();
     env.mock_all_auths();
@@ -93,7 +98,10 @@ fn registry_rejects_a_vote_when_the_real_agents_contract_says_no() {
     // Never registered in the agents contract.
     let stranger = Address::generate(&env);
 
-    registry.update_reputation(&service_id, &true, &stranger);
+    assert!(matches!(
+        registry.try_update_reputation(&service_id, &true, &stranger),
+        Err(Ok(RegistryError::CallerNotRegisteredAgent))
+    ));
 }
 
 #[test]

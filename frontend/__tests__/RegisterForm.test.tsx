@@ -240,10 +240,10 @@ describe('RegisterForm validation', () => {
 
   it('trims whitespace when validating endpoint', async () => {
     render(<RegisterForm walletAddress="GTESTADDRESS1234567890ABCDEFGHIJ" />);
-    
+
     const endpointInput = screen.getByLabelText(/endpoint url/i);
     fireEvent.change(endpointInput, { target: { value: '  http://example.com  ' } });
-    
+
     await waitFor(() => {
       expect(screen.getByText(/endpoint must start with https:\/\//i)).toBeInTheDocument();
     });
@@ -251,11 +251,11 @@ describe('RegisterForm validation', () => {
 
   it('shows error for endpoint longer than 256 characters', async () => {
     render(<RegisterForm walletAddress="GTESTADDRESS1234567890ABCDEFGHIJ" />);
-    
+
     const endpointInput = screen.getByLabelText(/endpoint url/i);
     const longEndpoint = 'https://example.com/' + 'a'.repeat(245);
     fireEvent.change(endpointInput, { target: { value: longEndpoint } });
-    
+
     await waitFor(() => {
       expect(screen.getByText(/endpoint must be at most 256 characters/i)).toBeInTheDocument();
     });
@@ -263,11 +263,11 @@ describe('RegisterForm validation', () => {
 
   it('accepts endpoint within 256 characters', async () => {
     render(<RegisterForm walletAddress="GTESTADDRESS1234567890ABCDEFGHIJ" />);
-    
+
     const endpointInput = screen.getByLabelText(/endpoint url/i);
     const validEndpoint = 'https://example.com/' + 'a'.repeat(232);
     fireEvent.change(endpointInput, { target: { value: validEndpoint } });
-    
+
     await waitFor(() => {
       expect(screen.queryByText(/endpoint must be at most 256 characters/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/endpoint must start with https:\/\//i)).not.toBeInTheDocument();

@@ -25,6 +25,7 @@ import {
   SimulationError,
   TransactionFailedError,
   TransactionTimeoutError,
+  registryErrorFromHostError,
 } from './contractErrors.js';
 import {
   trackPendingTransaction,
@@ -95,6 +96,13 @@ let assembleTransactionForSubmit = rpc.assembleTransaction;
 
 export function __setAssembleTransactionForTest(fn) {
   assembleTransactionForSubmit = fn ?? rpc.assembleTransaction;
+}
+
+function throwRegistryErrorIfPresent(details) {
+  const registryError = registryErrorFromHostError(details);
+  if (registryError) {
+    throw registryError;
+  }
 }
 
 export function getSubmitQueueDepth() {
@@ -179,6 +187,7 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
   logRpcCall('simulateTransaction', Date.now() - simStart);
 
   if (rpc.Api.isSimulationError(simResult)) {
+    throwRegistryErrorIfPresent(simResult.error);
     throw new SimulationError(`Simulation failed: ${simResult.error}`, simResult.error);
   }
 
@@ -209,7 +218,9 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
       logger.warn({ retryCount }, 'txBAD_SEQ encountered, retrying transaction');
       return _simulateAndSubmit(operation, signer, retryCount + 1);
     }
-    throw new TransactionFailedError(`Transaction failed: ${JSON.stringify(sendResult.errorResult || sendResult)}`, sendResult.hash, sendResult.errorResult || sendResult);
+    const details = sendResult.errorResult || sendResult;
+    throwRegistryErrorIfPresent(details);
+    throw new TransactionFailedError(`Transaction failed: ${JSON.stringify(details)}`, sendResult.hash, details);
   }
 
   const txHash = sendResult.hash;
@@ -235,6 +246,7 @@ async function _simulateAndSubmit(operation, signer, retryCount = 0) {
   removePendingTransaction(txHash);
 
   if (getResult.status === 'FAILED') {
+    throwRegistryErrorIfPresent(getResult);
     throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, sendResult.hash, getResult);
   }
 
@@ -290,6 +302,7 @@ async function buildUnsignedTx(operation) {
 
   const simResult = await server.simulateTransaction(tx);
   if (rpc.Api.isSimulationError(simResult)) {
+    throwRegistryErrorIfPresent(simResult.error);
     throw new ContractError(`Simulation failed: ${simResult.error}`, 'SIMULATION_FAILED');
   }
 
@@ -316,6 +329,7 @@ async function simulateRead(operation) {
   logRpcCall('simulateTransaction', Date.now() - simStart);
 
   if (rpc.Api.isSimulationError(simResult)) {
+    throwRegistryErrorIfPresent(simResult.error);
     throw new ContractError(`Simulation failed: ${simResult.error}`, 'SIMULATION_FAILED');
   }
 
@@ -345,6 +359,7 @@ export async function simulateReadBatch(operations) {
     logRpcCall('simulateTransaction', Date.now() - simStart);
 
     if (rpc.Api.isSimulationError(simResult)) {
+      throwRegistryErrorIfPresent(simResult.error);
       throw new ContractError(`Batch simulation failed: ${simResult.error}`, 'SIMULATION_FAILED');
     }
 
@@ -581,6 +596,9 @@ export async function deactivateServiceOnChain(id, providerAddress) {
     try {
       retval = await simulateRead(readOp);
     } catch (readErr) {
+      if (readErr instanceof ContractError && readErr.code === 'SERVICE_NOT_FOUND') {
+        throw readErr;
+      }
       // simulateRead threw — this is an RPC/simulation failure, not "not found"
       logger.error({ err: readErr, id }, 'deactivateServiceOnChain: failed to read service from chain');
       throw new ContractError(
@@ -740,7 +758,7 @@ export async function updateReputation(id, positive, agentAddress) {
 
     const before = await getService(id);
     if (!before) {
-      throw new Error(`Service ${id} not found before reputation update`);
+      throw new ContractError(`Service ${id} not found`, 'SERVICE_NOT_FOUND');
     }
 
     const contract = getContract();
@@ -754,7 +772,7 @@ export async function updateReputation(id, positive, agentAddress) {
 
     const after = await getService(id);
     if (!after) {
-      throw new Error(`Failed to read updated reputation for service ${id}`);
+      throw new ContractError(`Service ${id} not found`, 'SERVICE_NOT_FOUND');
     }
 
     const newReputation = after.reputation;
@@ -1158,6 +1176,7 @@ async function submitSignedTx(signedXdr) {
   const sendResult = await server.sendTransaction(tx);
   logRpcCall('sendTransaction', Date.now() - sendStart);
   if (sendResult.status === 'ERROR') {
+    throwRegistryErrorIfPresent(sendResult.errorResult || sendResult);
     throw new TransactionFailedError(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`, sendResult.hash, sendResult.errorResult);
   }
 
@@ -1182,6 +1201,7 @@ async function submitSignedTx(signedXdr) {
   removePendingTransaction(signedTxHash);
 
   if (getResult.status === 'FAILED') {
+    throwRegistryErrorIfPresent(getResult);
     throw new TransactionFailedError(`Transaction failed on-chain: ${sendResult.hash}`, sendResult.hash, getResult);
   }
 
