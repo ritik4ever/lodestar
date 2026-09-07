@@ -46,6 +46,18 @@ Payment failed — endpoint error {"event":"payment_failed","category":"weather"
 All candidate services exhausted {"event":"payment_failed","category":"weather","servicesAttempted":2}
 ```
 
+## Service discovery flow
+
+For each task, `runTask` begins with [`fetchServices` in `agent.js`](./agent.js),
+which requests the configured registry endpoint for the task category. A
+non-successful registry response stops the task with an error. A successful
+response without a `services` value becomes an empty list.
+
+After discovery, `runTask` filters services by the configured minimum
+reputation, selects from the highest-reputation candidates, attempts payment,
+and records the outcome when scoring is enabled. This keeps registry discovery
+separate from reputation filtering, service selection, payment, and scoring.
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |

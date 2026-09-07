@@ -271,6 +271,21 @@ function buildHttpClient() {
 
 // ── Registry helpers ──────────────────────────────────────────────────────────
 
+/**
+ * Fetch the registry services advertised for a task category.
+ *
+ * This discovery step runs before reputation filtering, service selection,
+ * payment, and score updates in {@link runTask}. It requests
+ * `GET /api/services?category=<category>` from the configured Lodestar API.
+ * The function performs that single registry read and does not filter results,
+ * select a service, submit payment, vote on reputation, or update a score.
+ *
+ * @param {string} category Registry category to request.
+ * @returns {Promise<object[]>} Advertised services, or an empty array when the
+ * response body does not contain a `services` value.
+ * @throws {Error} When the registry responds with a non-successful status or
+ * the request or response parsing fails.
+ */
 async function fetchServices(category) {
   const res = await fetchWithTimeout(`${LODESTAR_API_URL}/api/services?category=${category}`);
   if (!res.ok) throw new Error(`Registry fetch failed: ${res.status}`);
