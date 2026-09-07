@@ -13,7 +13,7 @@ import { stroopsToUsdcDisplay } from '../packages/stroops/index.js';
 
 
 
-function loadSecret() {
+export function loadSecret() {
   const envSecret = process.env.AGENT_STELLAR_SECRET;
   const filePath  = process.env.AGENT_STELLAR_SECRET_FILE;
 
