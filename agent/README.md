@@ -46,18 +46,28 @@ Payment failed — endpoint error {"event":"payment_failed","category":"weather"
 All candidate services exhausted {"event":"payment_failed","category":"weather","servicesAttempted":2}
 ```
 
+## Agent Flow
+
+The agent implements a discovery-payment-scoring loop:
+
+1. **Discover** — Query the Lodestar backend for services matching the allowed categories and minimum reputation.
+2. **Pay** — For each candidate service, check the spend limits with `ccheckSpend` ([agent.js:188](agent.js#L188)) before initiating the Stellar payment.
+3. **Score** — After a successful payment, report the payment to the backend so the agent’s on-chain credit score is updated.
+
+The `checkSpend` guard ensures the agent never exceeds `AGENT_MAX_PER_TX` or `AGENT_MAX_PER_DAY`, and it is called once per candidate service at the start of the payment step.
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
+|---------|---------|---------|---------------------------------------------------------|
 | `AGENT_STELLAR_SECRET` | Yes | — | Stellar secret key for the agent |
 | `STELLAR_RPC_URL` | Yes | — | Horizon RPC URL |
-| `LODESTAR_API_URL` | Yes | — | Base URL of the Lodestar backend |
+| `LODESTAR_API_URL` | Yes | ‒ | Base URL of the Lodestar backend |
 | `LODESTAR_HMAC_SECRET` | No | `""` | HMAC secret for signing payment-record requests |
 | `AGENT_NAME` | No | `LodestarAgent` | Display name |
 | `AGENT_DESC` | No | `""` | Agent description |
 | `AGENT_MAX_PER_TX` | No | `0.001` | Max USDC per transaction |
-| `AGENT_MAX_PER_DAY` | No | `1.00` | Max USDC per day |
+| `AGENT_MAX_PER_DAY` | No | `1.00``| Max USDC per day |
 | `AGENT_ALLOWED_CATEGORIES` | No | `weather,search` | Comma-separated allowed categories |
 | `AGENT_MIN_SERVICE_REPUTATION` | No | `0` | Minimum reputation to consider a service |
 | `AGENT_MAX_SERVICE_RETRIES` | No | `3` | Max weighted retry attempts per task |

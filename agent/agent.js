@@ -185,6 +185,32 @@ export async function ensureRegistered() {
   return false;
 }
 
+/**
+ * Checks with the Lodestar agents API whether a proposed payment is allowed
+ * by the agent's spending policy (per-transaction and per-day limits, and
+ * category allow-list).
+ *
+ * Called from `runTask` after a service is selected and before the x402
+ * payment is attempted. This is the "spend check" step in the
+ * discovery-payment-scoring loop. A failed check causes the caller to mark
+ * the service as failed and try the next candidate; a passed check emits
+ * SPEND_CHECK_PASSED and proceeds to payment.
+ *
+ * Side effects: performs an HTTP GET to the Lodestar can-spend endpoint.
+ * Does not modify agent state or emit logs; the caller is responsible for
+ * logging SPEND_CHECK_PASSED / SPEND_CHECK_BLOCKED and for applying the
+ * decision to candidate selection.
+ *
+ * Fail-open: if the policy service is unreachable or returns a non-ok
+ * response, this returns `{ allowed: true, reason: 'OK' }` so a transient
+ * outage does not block payments.
+ *
+ * @param {string} amountUsdc - Proposed payment amount as a USDC decimal string.
+ * @param {string} category  - Service category of the selected candidate.
+ * @returns {Promise<{allowed: boolean, reason?: string}>} `allowed: true`
+ *   (with `reason: 'OK'` in the fail-open case) when the payment may proceed,
+ *   otherwise `allowed: false` with `reason`.
+ */
 async function checkSpend(amountUsdc, category) {
   try {
     const res = await fetchWithTimeout(
