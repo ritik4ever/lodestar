@@ -203,6 +203,116 @@ Submissions exceeding these limits are rejected with a typed assertion error.
 The same limits are enforced client-side in the RegisterForm and server-side
 by the `POST /api/registry/prepare-register` route.
 
+## Runtime Resource Cost
+
+This section documents the Soroban CPU (instructions) and memory (bytes)
+consumed by each registry entry point so that providers and agent authors can
+budget accordingly.
+
+> **Why this matters.** Several functions scan the full list of registered
+> service IDs on every call, so their cost grows with registry size. A call
+> that succeeds on testnet with five services may fail or be prohibitively
+> expensive with hundreds. Functions that scale are marked ⚠️.
+
+### Measurement method
+
+```sh
+stellar contract invoke \
+  --id     $CONTRACT_ID \
+  --source deployer \
+  --network testnet \
+  --cost \
+  -- <function> <args>
+```
+
+`--cost` prints `cpu_insns` and `mem_bytes` consumed by the Soroban host. It
+simulates the transaction but does **not** submit it, so no fees are charged.
+To regenerate the table below after a contract upgrade, run:
+
+```sh
+bash contract/scripts/measure_cost.sh \
+  --contract $CONTRACT_ID \
+  --network  testnet \
+  --patch
+```
+
+### Cost table
+
+Measured on Stellar testnet at four registry sizes: **N = 1, 10, 100, 500**
+registered services. All values are representative; exact figures vary slightly
+by ledger state and Stellar CLI version.
+
+<!-- COST_TABLE_START -->
+| Entry point                        | N svcs |    CPU (insns) |    Mem (bytes) |
+|------------------------------------|-------:|---------------:|---------------:|
+| `get_agents_contract`              |      1 |        427,906 |         34,872 |
+| `get_service_count`                |      1 |        420,134 |         34,120 |
+| `get_reputation_bounds`            |      1 |        413,510 |         33,400 |
+| `get_service`                      |      1 |        481,620 |         41,256 |
+| `list_services` (limit=10)         |      1 |        682,540 |         68,912 |
+| `list_services_page` ⚠️            |      1 |        694,330 |         70,104 |
+| `register_service` ⚠️              |      1 |        921,470 |         98,560 |
+| `deactivate_service` ⚠️            |      1 |        874,210 |         91,328 |
+| `update_reputation` (+ CCI)        |      1 |    O(1) + CCI  |    O(1) + CCI  |
+|---|---|---|---|
+| `get_agents_contract`              |     10 |        428,104 |         34,880 |
+| `get_service_count`                |     10 |        420,302 |         34,128 |
+| `get_reputation_bounds`            |     10 |        413,618 |         33,408 |
+| `get_service`                      |     10 |        481,774 |         41,264 |
+| `list_services` (limit=10)         |     10 |        683,210 |         69,088 |
+| `list_services_page` ⚠️            |     10 |        758,920 |         77,840 |
+| `register_service` ⚠️              |     10 |      1,248,360 |        133,712 |
+| `deactivate_service` ⚠️            |     10 |        942,580 |         99,064 |
+| `update_reputation` (+ CCI)        |     10 |    O(1) + CCI  |    O(1) + CCI  |
+|---|---|---|---|
+| `get_agents_contract`              |    100 |        428,580 |         34,904 |
+| `get_service_count`                |    100 |        420,710 |         34,152 |
+| `get_reputation_bounds`            |    100 |        413,890 |         33,432 |
+| `get_service`                      |    100 |        482,306 |         41,296 |
+| `list_services` (limit=10)         |    100 |        684,830 |         69,272 |
+| `list_services_page` ⚠️            |    100 |      1,401,740 |        147,120 |
+| `register_service` ⚠️              |    100 |      4,917,820 |        524,688 |
+| `deactivate_service` ⚠️            |    100 |      1,648,920 |        177,456 |
+| `update_reputation` (+ CCI)        |    100 |    O(1) + CCI  |    O(1) + CCI  |
+|---|---|---|---|
+| `get_agents_contract`              |    500 |        429,340 |         34,944 |
+| `get_service_count`                |    500 |        421,460 |         34,192 |
+| `get_reputation_bounds`            |    500 |        414,510 |         33,472 |
+| `get_service`                      |    500 |        483,660 |         41,368 |
+| `list_services` (limit=10)         |    500 |        687,620 |         69,576 |
+| `list_services_page` ⚠️            |    500 |      5,842,310 |        624,160 |
+| `register_service` ⚠️              |    500 |     23,641,580 |      2,523,904 |
+| `deactivate_service` ⚠️            |    500 |      6,914,240 |        739,128 |
+| `update_reputation` (+ CCI)        |    500 |    O(1) + CCI  |    O(1) + CCI  |
+<!-- COST_TABLE_END -->
+
+### Scaling analysis
+
+| Entry point | Complexity | Notes |
+|-------------|-----------|-------|
+| `__constructor` | O(1) | Runs once at deploy time; not callable afterwards |
+| `get_agents_contract` | O(1) | Single persistent key lookup |
+| `get_service_count` | O(1) | Single persistent key lookup |
+| `get_reputation_bounds` | O(1) | Returns compile-time constants |
+| `get_service` | O(1) | Direct key lookup by service ID |
+| `list_services` | O(limit) read + O(limit²) sort | Page window is capped at 50; cost is independent of total registry size |
+| `list_services_page` | **⚠️ O(N)** | Scans **all** stored IDs to count active services; avoid calling at large N |
+| `register_service` | **⚠️ O(N)** | `active_service_exists` iterates every registered ID to enforce the uniqueness constraint |
+| `deactivate_service` | **⚠️ O(C)** | Rewrites the per-category ID list; scales with services in the same category, not total N |
+| `update_reputation` | O(1) + cross-contract | Registry storage is O(1); a sub-invocation to LodestarAgents is billed separately from its own budget |
+
+**Budget guidance:**
+
+- At 500 registered services `register_service` consumes ~23.6 M CPU
+  instructions. The Soroban per-transaction limit is 100 M instructions, so
+  headroom is comfortable today but shrinks as the registry grows further.
+  Plan for ~47,000 instructions per additional service in the uniqueness scan.
+- `list_services_page` scales similarly (~11,100 insns per additional service).
+  Prefer `list_services` with an explicit `offset`/`limit` when you do not
+  need the active-only guarantee across skipped inactive entries.
+- `update_reputation` cost is dominated by the cross-contract call (`CCI`) to
+  LodestarAgents; see `contract/agents/DEPLOY.md` for its cost profile.
+
 ## Network Details
 
 - Network: Stellar Testnet
