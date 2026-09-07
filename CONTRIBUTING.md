@@ -25,6 +25,12 @@ backend variables from `backend/.env.example` (for example `CONTRACT_ID`,
 `SERVER_STELLAR_ADDRESS`, and `SERVER_STELLAR_SECRET`). Docker Compose reads this
 file automatically and passes those values to the backend. Do not commit it.
 
+For backend-only local development without Docker, copy `backend/.env.example` to
+`backend/.env` and fill in your local values before running `npm run dev` from the
+`backend` directory. Keep `backend/.env` local and untracked. Backend tests load
+their fixture values from the committed `backend/.env.test` file through Vitest;
+do not put personal credentials in that file.
+
 Stop the stack with `docker compose down`. Both images use multi-stage builds and
 run as the unprivileged `node` user.
 
