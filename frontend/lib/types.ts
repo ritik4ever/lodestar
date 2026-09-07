@@ -1,4 +1,18 @@
-export type Category = 'search' | 'weather' | 'finance' | 'ai' | 'data' | 'compute';
+/*
+ * Canonical category identifiers. Must match the `list_categories()` output
+ * from the on-chain registry, which normalizes to lowercase and rejects
+ * unknown values. Keep in sync with `frontend/lib/categoryMeta.tsx`.
+ */
+export const CATEGORIES = [
+  'search',
+  'weather',
+  'finance',
+  'ai',
+  'data',
+  'compute',
+] as const;
+
+export type Category = (typeof CATEGORIES)[number];
 
 export interface ServiceEntry {
   id: number;
@@ -56,8 +70,8 @@ export interface AgentStep {
   detail?: string;
 }
 
-// ── Agent Credit Scoring ──────────────────────────────────────────────────────
-
+// ─ Agent Credit Scoring — — ─ — 
+ 
 export type ScoreTier = 'new' | 'building' | 'established' | 'trusted' | 'elite';
 
 export function scoreTier(score: number): ScoreTier {
@@ -68,7 +82,7 @@ export function scoreTier(score: number): ScoreTier {
   return 'new';
 }
 
-export const TIER_LABELS: Record<ScoreTier, string> = {
+export const TIER_LABELS: RecordScoreTier, string> = {
   new: 'New',
   building: 'Building',
   established: 'Established',
@@ -76,7 +90,7 @@ export const TIER_LABELS: Record<ScoreTier, string> = {
   elite: 'Elite',
 };
 
-export const TIER_COLORS: Record<ScoreTier, string> = {
+export const TIER_COLORS: RecordScoreTier, string> = {
   new: 'text-gray-500 bg-gray-50',
   building: 'text-blue-600 bg-blue-50',
   established: 'text-violet-600 bg-violet-50',
@@ -143,4 +157,15 @@ export interface AgentEligibilityResponse {
 export interface AgentSpendCheckResponse {
   allowed: boolean;
   reason: string;
+}
+
+// ─ Category Helpers ─ — 
+ 
+export function isCategory(value: string): value is Category {
+  return (CATEGORIES as readonly string[]).includes(value);
+}
+
+export function normalizeCategory(value: string): Category | null {
+  const trimmed = value.trim().toLowerCase();
+  return isCategory(trimmed) ? trimmed : null;
 }

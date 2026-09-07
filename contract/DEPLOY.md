@@ -133,6 +133,20 @@ registers as an agent. Set `NEXT_PUBLIC_DEMO_AGENT_ADDRESS` (frontend) to that
 address. To let other pre-funded demo agents vote, add their secrets to
 `DEMO_VOTER_SECRETS` (backend).
 
+## Registry Events
+
+The registry emits one event after each successful public service mutation. The
+first two topic values are symbols; the third topic value is the service ID.
+
+| Action | Topics | Data |
+| --- | --- | --- |
+| Register | `("registry", "registered", service_id)` | `(provider, name, description, endpoint, category, price_usdc, pay_to)` |
+| Reputation update | `("registry", "reputation", service_id)` | `(caller, positive, reputation)` |
+| Deactivate | `("registry", "deactivated", service_id)` | `(provider)` |
+
+Indexers can use the action symbol in the second topic to distinguish events
+and should treat the data tuple as the action-specific schema shown above.
+
 ## 9. Run seed script
 
 ```sh
@@ -160,7 +174,7 @@ failures. These discriminants are stable API surface and must not be reordered:
 | 8 | `ProviderMismatch` | `PROVIDER_MISMATCH` | A non-provider attempted to deactivate the service. |
 | 9 | `CategoryIndexNotFound` | `CATEGORY_INDEX_NOT_FOUND` | Registry storage is missing the service category index. |
 | 10 | `InvalidEndpoint` | `INVALID_ENDPOINT` | Service endpoint is longer than 256 characters. |
-| 11 | `InvalidCategory` | `INVALID_CATEGORY` | Service category is outside the 1-32 character range. |
+| 11 | `InvalidCategory` | `INVALID_CATEGORY` | Service category is unsupported or outside the 1-32 character range. |
 
 ## 10. (Optional) Set demo agent secrets
 

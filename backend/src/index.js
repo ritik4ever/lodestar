@@ -6,7 +6,7 @@ import {
   requestLogger,
   requestContextMiddleware,
 } from "./middleware/requestContext.js";
-import { checkRpcHealth } from "./lib/stellar.js";
+import { checkReadiness } from "./lib/readiness.js";
 import {
   getSubmitQueueDepth,
   drainSubmitQueue,
@@ -67,35 +67,32 @@ app.use(cors({ origin: config.corsOrigin, credentials: true }));
 app.use(requestIdMiddleware);
 app.use(express.json({ limit: config.jsonBodyLimit }));
 
-app.get("/healthz", async (req, res) => {
+// Liveness (#841): dependency-free by design. Answers only "is this process
+// running?" so an orchestrator never restarts a healthy instance because an
+// upstream is slow. Dependency state lives on /readyz.
+app.get("/healthz", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    uptimeSeconds: Math.floor(process.uptime()),
+    queueDepth: getSubmitQueueDepth(),
+    pendingTransactions: getPendingTransactionCount(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Readiness (#841): can this instance serve traffic right now? Checks RPC and
+// Redis under a short timeout and returns 503 when a required dependency is
+// unreachable, so traffic stops without the process being restarted.
+app.get("/readyz", async (req, res) => {
   try {
-    const health = await checkRpcHealth();
-    const queueDepth = getSubmitQueueDepth();
-
-    // Determine HTTP status code based on health status
-    let statusCode = 200;
-    if (health.status === "unhealthy") {
-      statusCode = 503; // Service Unavailable
-    } else if (health.status === "degraded") {
-      statusCode = 200; // Still accept requests but indicate degradation
-    }
-
-    const pendingTxCount = getPendingTransactionCount();
-
-    res.status(statusCode).json({
-      status: health.status,
-      rpc: health.rpc,
-      contract: health.contract,
-      timestamp: health.timestamp,
-      queueDepth,
-      pendingTransactions: pendingTxCount,
-      ...(health.error && { error: health.error }),
-    });
+    const result = await checkReadiness();
+    res.status(result.ready ? 200 : 503).json(result);
   } catch (err) {
-    req.log.error({ err }, "Health check failed");
+    logger.error({ err }, "GET /readyz failed");
     res.status(503).json({
-      status: "unhealthy",
-      error: "Health check failed",
+      ready: false,
+      status: "not_ready",
+      error: "Readiness check failed",
       timestamp: new Date().toISOString(),
     });
   }

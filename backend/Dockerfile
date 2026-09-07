@@ -19,4 +19,9 @@ USER node
 
 EXPOSE 3001
 
+# Liveness only (#841): restarts the container when the process itself is
+# wedged. Readiness (/readyz) gates traffic and is checked by the orchestrator,
+# not here — a dependency outage must not trigger a restart loop.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 CMD node -e "fetch('http://127.0.0.1:3001/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
 CMD ["npm", "start"]

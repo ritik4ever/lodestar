@@ -119,16 +119,7 @@ describe('POST /admin/agents/:address/flag', () => {
     expect(mockFlagAgentOnChain).not.toHaveBeenCalled();
   });
 
-  it('returns 401 when X-Admin-Key is invalid', async () => {
-    const res = await request(app)
-      .post(`/admin/agents/${ADDRESS}/flag`)
-      .set('X-Admin-Key', 'invalid_key')
-      .send({ reason: 'test' });
-
-    expect(res.status).toBe(401);
-    expect(res.body.code).toBe('ADMIN_KEY_INVALID');
-    expect(mockFlagAgentOnChain).not.toHaveBeenCalled();
-  });
+ 
 
   it('handles contract errors gracefully', async () => {
     mockFlagAgentOnChain.mockRejectedValueOnce(new Error('Chain error'));

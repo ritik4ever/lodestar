@@ -11,7 +11,7 @@ export const REGISTRY_ERROR_CODES = Object.freeze({
   8: { code: 'PROVIDER_MISMATCH', message: 'Only the provider that registered this service can deactivate it' },
   9: { code: 'CATEGORY_INDEX_NOT_FOUND', message: 'Category index not found' },
   10: { code: 'INVALID_ENDPOINT', message: 'Service endpoint must be at most 256 characters' },
-  11: { code: 'INVALID_CATEGORY', message: 'Service category must be 1-32 characters' },
+  11: { code: 'INVALID_CATEGORY', message: 'Service category must be a supported value of 1-32 characters' },
 });
 
 const REGISTRY_ERROR_PATTERNS = [
@@ -109,27 +109,30 @@ export function registryErrorFromHostError(details) {
 }
 
 export class SimulationError extends ContractError {
-  constructor(message, details) {
+  constructor(message, details, cause) {
     super(message, 'SIMULATION_FAILED');
     this.name = 'SimulationError';
     if (details !== undefined) this.details = details;
+    if (cause) this.cause = cause;
   }
 }
 
 export class TransactionFailedError extends ContractError {
-  constructor(message, hash, details) {
+  constructor(message, hash, details, cause) {
     super(message, 'TRANSACTION_FAILED');
     this.name = 'TransactionFailedError';
     if (hash) this.hash = hash;
     if (details !== undefined) this.details = details;
+    if (cause) this.cause = cause;
   }
 }
 
 export class TransactionTimeoutError extends ContractError {
-  constructor(message, hash) {
+  constructor(message, hash, cause) {
     super(message, 'TRANSACTION_TIMEOUT');
     this.name = 'TransactionTimeoutError';
     if (hash) this.hash = hash;
+    if (cause) this.cause = cause;
   }
 }
 

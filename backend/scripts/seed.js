@@ -4,7 +4,7 @@ import config from '../src/config.js';
 import { listServicesByProvider, registerServiceOnChain } from '../src/lib/contract.js';
 import logger from '../src/lib/logger.js';
 
-process.env.SEEDING_MODE ??= 'true';
+
 
 const SERVICES = [
   {

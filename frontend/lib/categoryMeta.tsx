@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import type { Category } from './types';
+import { CATEGORIES, normalizeCategory, type Category } from './categories';
 
 export interface CategoryMeta {
   label: string;
@@ -99,15 +99,16 @@ const UNKNOWN_CATEGORY_META: CategoryMeta = {
 
 export const CATEGORY_FILTERS: { label: string; value: Category | 'all' }[] = [
   { label: 'All', value: 'all' },
-  ...Object.entries(CATEGORY_META).map(([value, meta]) => ({
-    label: meta.label,
-    value: value as Category,
+  ...CATEGORIES.map((value) => ({
+    label: CATEGORY_META[value].label,
+    value,
   })),
 ];
 
 export function getCategoryMeta(category: Category | string | undefined): CategoryMeta {
-  if (category && Object.hasOwn(CATEGORY_META, category)) {
-    return CATEGORY_META[category as Category];
+  const normalized = category ? normalizeCategory(category) : undefined;
+  if (normalized && Object.hasOwn(CATEGORY_META, normalized)) {
+    return CATEGORY_META[normalized];
   }
 
   return UNKNOWN_CATEGORY_META;

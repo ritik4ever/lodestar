@@ -1,0 +1,15 @@
+{
+  "name": "@lodestar/stroops",
+  "version": "1.0.0",
+  "description": "Single implementation of USDC <-> stroop conversion, shared by the backend and the agent.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "license": "ISC"
+}

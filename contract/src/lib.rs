@@ -32,6 +32,39 @@ pub enum RegistryError {
     InvalidCategory = 11,
 }
 
+// Canonical category list. Keep in sync with `frontend/lib/categoryMeta.tsx`.
+// Existing mixed-case entries are not migrated automatically; providers should
+// re-register under a canonical category returned by `list_categories()`.
+const VALID_CATEGORIES: &[&str] = &["search", "weather", "finance", "ai", "data", "compute"];
+
+// Returns the canonical lower-case form for a user-supplied category string,
+// or `None` if it is not one of the known categories.
+fn canonicalize_category(env: &Env, category: &String) -> Option<String> {
+    let len = category.len() as usize;
+    if len > 32 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    category.copy_into_slice(&mut bytes[..len]);
+
+    let mut start = 0;
+    while start < len && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    let mut end = len;
+    while end > start && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let trimmed = &bytes[start..end];
+
+    for &cat in VALID_CATEGORIES {
+        if trimmed.eq_ignore_ascii_case(cat.as_bytes()) {
+            return Some(String::from_str(env, cat));
+        }
+    }
+    None
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct ServiceEntry {
@@ -61,30 +94,14 @@ pub enum DataKey {
     // `(service_id, agent) -> last_vote_ledger` cooldown map as discrete keys so
     // each lookup touches only one entry instead of loading a growing Map.
     LastVote(u64, Address),
+    ProviderEndpoint(Address, String),
 }
 
 fn active_service_exists(env: &Env, provider: &Address, endpoint: &String) -> bool {
-    let ids: Vec<u64> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::ServiceIds)
-        .unwrap_or_else(|| vec![&env]);
-
-    let mut i = 0;
-    while i < ids.len() {
-        if let Some(entry) = env
-            .storage()
-            .persistent()
-            .get::<DataKey, ServiceEntry>(&DataKey::Service(ids.get(i).unwrap()))
-        {
-            if entry.active && entry.provider == *provider && entry.endpoint == *endpoint {
-                return true;
-            }
-        }
-        i += 1;
-    }
-
-    false
+    env.storage().persistent().has(&DataKey::ProviderEndpoint(
+        provider.clone(),
+        endpoint.clone(),
+    ))
 }
 
 #[contract]
@@ -150,7 +167,9 @@ impl LodestarRegistry {
 
         let new_id = counter + 1;
 
-        let cat = category.clone();
+        let canonical_category =
+            canonicalize_category(&env, &category).ok_or(RegistryError::InvalidCategory)?;
+        let cat = canonical_category.clone();
 
         let entry = ServiceEntry {
             id: new_id,
@@ -159,7 +178,7 @@ impl LodestarRegistry {
             endpoint,
             price_usdc,
             pay_to,
-            category,
+            category: canonical_category,
             provider,
             reputation: 0,
             active: true,
@@ -172,6 +191,13 @@ impl LodestarRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Service(new_id), MAX_TTL, MAX_TTL);
+
+        let endpoint_key =
+            DataKey::ProviderEndpoint(entry.provider.clone(), entry.endpoint.clone());
+        env.storage().persistent().set(&endpoint_key, &new_id);
+        env.storage()
+            .persistent()
+            .extend_ttl(&endpoint_key, MAX_TTL, MAX_TTL);
 
         env.storage().persistent().set(&DataKey::Counter, &new_id);
         env.storage()
@@ -204,6 +230,23 @@ impl LodestarRegistry {
             MAX_TTL,
         );
 
+        env.events().publish(
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "registered"),
+                new_id,
+            ),
+            (
+                entry.provider.clone(),
+                entry.name.clone(),
+                entry.description.clone(),
+                entry.endpoint.clone(),
+                entry.category.clone(),
+                entry.price_usdc.clone(),
+                entry.pay_to.clone(),
+            ),
+        );
+
         Ok(new_id)
     }
 
@@ -223,10 +266,13 @@ impl LodestarRegistry {
         let limit = limit.min(50u32).max(1u32);
         let start: u32 = offset;
 
-        let ids: Vec<u64> = if let Some(ref cat) = category {
+        let ids: Vec<u64> = if let Some(ref category) = category {
+            let Some(cat) = canonicalize_category(&env, category) else {
+                return vec![&env];
+            };
             env.storage()
                 .persistent()
-                .get(&DataKey::ServiceIdsByCategory(cat.clone()))
+                .get(&DataKey::ServiceIdsByCategory(cat))
                 .unwrap_or_else(|| vec![&env])
         } else {
             env.storage()
@@ -270,6 +316,15 @@ impl LodestarRegistry {
         }
 
         services
+    }
+
+    /// Return the list of valid category strings.
+    pub fn list_categories(env: Env) -> Vec<String> {
+        let mut categories: Vec<String> = vec![&env];
+        for &cat in VALID_CATEGORIES {
+            categories.push_back(String::from_str(&env, cat));
+        }
+        categories
     }
 
     /// List a single page of services in registration order, filtering only active services.
@@ -384,6 +439,15 @@ impl LodestarRegistry {
             .persistent()
             .extend_ttl(&vote_key, MAX_TTL, MAX_TTL);
 
+        env.events().publish(
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "reputation"),
+                id,
+            ),
+            (caller, positive, entry.reputation),
+        );
+
         Ok(())
     }
 
@@ -408,6 +472,13 @@ impl LodestarRegistry {
             .persistent()
             .extend_ttl(&DataKey::Service(id), MAX_TTL, MAX_TTL);
 
+        env.storage()
+            .persistent()
+            .remove(&DataKey::ProviderEndpoint(
+                entry.provider.clone(),
+                entry.endpoint.clone(),
+            ));
+
         // Remove from category index
         let cat_key = DataKey::ServiceIdsByCategory(entry.category.clone());
         let cat_ids: Vec<u64> = env
@@ -426,6 +497,15 @@ impl LodestarRegistry {
             .persistent()
             .extend_ttl(&cat_key, MAX_TTL, MAX_TTL);
 
+        env.events().publish(
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "deactivated"),
+                id,
+            ),
+            (provider,),
+        );
+
         Ok(())
     }
 
@@ -443,10 +523,15 @@ impl LodestarRegistry {
 
 #[cfg(test)]
 mod test {
+    // This crate is no_std; `format!` lives in `alloc` and must be imported
+    // explicitly for the tests that build strings.
+    extern crate alloc;
+    use alloc::format;
+
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _, Ledger as _, MockAuth, MockAuthInvoke},
-        Address, IntoVal, String,
+        testutils::{Address as _, Events, Ledger as _, MockAuth, MockAuthInvoke},
+        Address, FromVal, IntoVal, String,
     };
     fn setup_service(
         env: &Env,
@@ -581,7 +666,7 @@ mod test {
 
             // Register services in different categories
             setup_service(&env, 1, &provider, "compute", 0, true);
-            setup_service(&env, 2, &provider, "storage", 0, true);
+            setup_service(&env, 2, &provider, "weather", 0, true);
             setup_service(&env, 3, &provider, "compute", 0, true);
 
             // Test filtering by compute category
@@ -593,15 +678,15 @@ mod test {
             );
             assert_eq!(compute_result.len(), 2);
 
-            // Test filtering by storage category
-            let storage_result = LodestarRegistry::list_services(
+            // Test filtering by weather category
+            let weather_result = LodestarRegistry::list_services(
                 env.clone(),
                 0,
                 20,
-                Some(String::from_str(&env, "storage")),
+                Some(String::from_str(&env, "weather")),
             );
-            assert_eq!(storage_result.len(), 1);
-            assert_eq!(storage_result.get(0).unwrap().id, 2);
+            assert_eq!(weather_result.len(), 1);
+            assert_eq!(weather_result.get(0).unwrap().id, 2);
 
             // Test with no filter (should return all)
             let all_result = LodestarRegistry::list_services(env, 0, 20, None);
@@ -671,6 +756,15 @@ mod test {
                 0,
                 20,
                 Some(String::from_str(&env, "nonexistent")),
+            );
+            assert_eq!(result.len(), 0);
+
+            let long_category = "A".repeat(33);
+            let result = LodestarRegistry::list_services(
+                env.clone(),
+                0,
+                20,
+                Some(String::from_str(&env, &long_category)),
             );
             assert_eq!(result.len(), 0);
         });
@@ -851,6 +945,134 @@ mod test {
             &String::from_str(env, "G_TEST_PAYMENT"),
             &String::from_str(env, "compute"),
         )
+    }
+
+    fn register_service_with_provider_and_endpoint(
+        env: &Env,
+        registry: &LodestarRegistryClient,
+        provider: &Address,
+        endpoint: &String,
+    ) -> u64 {
+        registry.register_service(
+            provider,
+            &String::from_str(env, "Test Service"),
+            &String::from_str(env, "Test Description"),
+            endpoint,
+            &String::from_str(env, "10"),
+            &String::from_str(env, "G_TEST_PAYMENT"),
+            &String::from_str(env, "compute"),
+        )
+    }
+
+    #[test]
+    fn test_register_service_emits_registered_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let name = String::from_str(&env, "Test Service");
+        let description = String::from_str(&env, "Test Description");
+        let endpoint = String::from_str(&env, "https://test.com");
+        let price = String::from_str(&env, "10");
+        let pay_to = String::from_str(&env, "G_TEST_PAYMENT");
+        let category = String::from_str(&env, "compute");
+
+        let id = registry.register_service(
+            &provider,
+            &name,
+            &description,
+            &endpoint,
+            &price,
+            &pay_to,
+            &category,
+        );
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "registered"),
+                id,
+            )
+                .into_val(&env)
+        );
+        assert_eq!(
+            <(Address, String, String, String, String, String, String)>::from_val(&env, &event.2),
+            (
+                provider,
+                name,
+                description,
+                endpoint,
+                category,
+                price,
+                pay_to
+            )
+        );
+    }
+
+    #[test]
+    fn test_update_reputation_emits_reputation_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, agents) = deploy_registry(&env);
+        let id = register_a_service(&env, &registry);
+        let agent = Address::generate(&env);
+        agents.set_registered(&agent, &true);
+
+        registry.update_reputation(&id, &true, &agent);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "reputation"),
+                id,
+            )
+                .into_val(&env)
+        );
+        assert_eq!(
+            <(Address, bool, i32)>::from_val(&env, &event.2),
+            (agent, true, 1i32)
+        );
+    }
+
+    #[test]
+    fn test_deactivate_service_emits_deactivated_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (registry, _agents) = deploy_registry(&env);
+        let provider = Address::generate(&env);
+        let id = registry.register_service(
+            &provider,
+            &String::from_str(&env, "Test Service"),
+            &String::from_str(&env, "Test Description"),
+            &String::from_str(&env, "https://test.com"),
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_TEST_PAYMENT"),
+            &String::from_str(&env, "compute"),
+        );
+
+        registry.deactivate_service(&provider, &id);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let event = events.get(0).unwrap();
+        assert_eq!(
+            event.1,
+            (
+                Symbol::new(&env, "registry"),
+                Symbol::new(&env, "deactivated"),
+                id,
+            )
+                .into_val(&env)
+        );
+        assert_eq!(<(Address,)>::from_val(&env, &event.2), (provider,));
     }
 
     #[test]
@@ -1435,24 +1657,26 @@ mod test {
     }
 
     #[test]
-    fn test_register_service_accepts_category_at_max() {
+    fn test_register_service_canonicalizes_category() {
         let env = Env::default();
         env.mock_all_auths();
         let (registry, _agents) = deploy_registry(&env);
         let provider = Address::generate(&env);
 
-        let max_category = "A".repeat(32);
-        assert!(registry
-            .try_register_service(
-                &provider,
-                &String::from_str(&env, "Valid Name"),
-                &String::from_str(&env, "Valid description long enough"),
-                &String::from_str(&env, "https://example.com"),
-                &String::from_str(&env, "10"),
-                &String::from_str(&env, "G_PAYMENT"),
-                &String::from_str(&env, &max_category),
-            )
-            .is_ok());
+        let id = registry.register_service(
+            &provider,
+            &String::from_str(&env, "Valid Name"),
+            &String::from_str(&env, "Valid description long enough"),
+            &String::from_str(&env, "https://example.com"),
+            &String::from_str(&env, "10"),
+            &String::from_str(&env, "G_PAYMENT"),
+            &String::from_str(&env, " Compute "),
+        );
+
+        assert_eq!(
+            registry.get_service(&id).category,
+            String::from_str(&env, "compute")
+        );
     }
 
     #[test]

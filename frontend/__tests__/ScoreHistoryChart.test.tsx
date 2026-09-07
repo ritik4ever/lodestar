@@ -1,13 +1,20 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { ScoreHistoryChart } from '../components/ScoreHistoryChart';
+import {
+  ScoreHistoryChart,
+  EMPTY_HISTORY_COPY,
+  SINGLE_POINT_COPY,
+} from '../components/ScoreHistoryChart';
 import type { ScoreEvent } from '../components/ScoreHistoryChart';
 
 describe('ScoreHistoryChart', () => {
   // ── Synthetic data path (scoreHistory omitted / null) ─────────────────────
 
-  it('renders nothing when there are no payments and no scoreHistory', () => {
-    const { container } = render(
+  // Changed in #856: a brand-new agent used to see *nothing* here, which reads
+  // as a broken widget on the first screen after registering. It now shows the
+  // explained empty state instead.
+  it('renders the explained empty state when there are no payments and no scoreHistory', () => {
+    render(
       <ScoreHistoryChart
         currentScore={500}
         totalPayments={0}
@@ -15,7 +22,9 @@ describe('ScoreHistoryChart', () => {
         failedPayments={0}
       />
     );
-    expect(container.firstChild).toBeNull();
+
+    expect(screen.getByTestId('score-history-empty')).toBeInTheDocument();
+    expect(screen.getByText(EMPTY_HISTORY_COPY)).toBeInTheDocument();
   });
 
   it('renders the synthetic sparkline with an explicit "estimated" label', () => {
@@ -104,7 +113,7 @@ describe('ScoreHistoryChart', () => {
     );
 
     expect(screen.getByText('Score History')).toBeInTheDocument();
-    expect(screen.getByText('No history yet')).toBeInTheDocument();
+    expect(screen.getByText(EMPTY_HISTORY_COPY)).toBeInTheDocument();
 
     // No sparkline should be drawn
     expect(document.querySelector('polyline')).toBeNull();
@@ -162,5 +171,150 @@ describe('ScoreHistoryChart', () => {
     const circle = document.querySelector('circle');
     // score=1000, HEIGHT=30 → y = 30 - (1000/1000)*30 = 0
     expect(circle?.getAttribute('cy')).toBe('0');
+  });
+});
+
+// ── Sparse states (#856) ───────────────────────────────────────────────────
+//
+// A newly registered agent has zero or one data point, and this chart is one of
+// the first things it sees. Both states must render deliberately rather than
+// degenerately, and must say why the chart is sparse.
+
+describe('ScoreHistoryChart — sparse states (#856)', () => {
+  describe('zero points', () => {
+    it('explains why there is no history rather than drawing an empty axis', () => {
+      render(
+        <ScoreHistoryChart
+          currentScore={500}
+          totalPayments={0}
+          successfulPayments={0}
+          failedPayments={0}
+          scoreHistory={[]}
+        />
+      );
+
+      expect(screen.getByTestId('score-history-empty')).toBeInTheDocument();
+      expect(screen.getByText(EMPTY_HISTORY_COPY)).toBeInTheDocument();
+      expect(screen.queryByTestId('score-history-line')).not.toBeInTheDocument();
+    });
+
+    it('draws no polyline, so a flat line cannot be mistaken for a static score', () => {
+      const { container } = render(
+        <ScoreHistoryChart
+          currentScore={500}
+          totalPayments={0}
+          successfulPayments={0}
+          failedPayments={0}
+          scoreHistory={[]}
+        />
+      );
+
+      expect(container.querySelector('polyline')).toBeNull();
+      expect(container.querySelector('circle')).toBeNull();
+    });
+  });
+
+  describe('single point', () => {
+    const oneEvent: ScoreEvent[] = [{ timestamp: 1_756_000_000, score: 500 }];
+
+    it('renders the point itself instead of an invisible one-point line', () => {
+      const { container } = render(
+        <ScoreHistoryChart
+          currentScore={500}
+          totalPayments={1}
+          successfulPayments={1}
+          failedPayments={0}
+          scoreHistory={oneEvent}
+        />
+      );
+
+      expect(screen.getByTestId('score-history-single')).toBeInTheDocument();
+      // A polyline of one point draws nothing at all — the marker carries the value.
+      expect(container.querySelector('polyline')).toBeNull();
+      expect(container.querySelector('circle')).not.toBeNull();
+    });
+
+    it('places the marker at the point\'s own value, not at the right-hand edge', () => {
+      const { container } = render(
+        <ScoreHistoryChart
+          currentScore={500}
+          totalPayments={1}
+          successfulPayments={1}
+          failedPayments={0}
+          scoreHistory={oneEvent}
+        />
+      );
+
+      const circle = container.querySelector('circle')!;
+      // Previously the end marker was pinned to cx=120 regardless of the data.
+      expect(Number(circle.getAttribute('cx'))).toBe(60);
+      // score 500 of 1000 over a 30px height → y = 15.
+      expect(Number(circle.getAttribute('cy'))).toBeCloseTo(15, 5);
+    });
+
+    it('explains that a trend line needs another transaction', () => {
+      render(
+        <ScoreHistoryChart
+          currentScore={500}
+          totalPayments={1}
+          successfulPayments={1}
+          failedPayments={0}
+          scoreHistory={oneEvent}
+        />
+      );
+
+      expect(screen.getByText(SINGLE_POINT_COPY)).toBeInTheDocument();
+    });
+
+    it('gives the lone point an accessible description', () => {
+      render(
+        <ScoreHistoryChart
+          currentScore={500}
+          totalPayments={1}
+          successfulPayments={1}
+          failedPayments={0}
+          scoreHistory={oneEvent}
+        />
+      );
+
+      expect(screen.getByLabelText(/single data point at 500/i)).toBeInTheDocument();
+    });
+
+    it('clamps an out-of-range score into the plot area', () => {
+      const { container } = render(
+        <ScoreHistoryChart
+          currentScore={0}
+          totalPayments={1}
+          successfulPayments={0}
+          failedPayments={1}
+          scoreHistory={[{ timestamp: 1, score: 5000 }]}
+        />
+      );
+
+      const cy = Number(container.querySelector('circle')!.getAttribute('cy'));
+      expect(cy).toBeGreaterThanOrEqual(0);
+      expect(cy).toBeLessThanOrEqual(30);
+    });
+  });
+
+  describe('two or more points', () => {
+    it('still renders a line', () => {
+      const { container } = render(
+        <ScoreHistoryChart
+          currentScore={520}
+          totalPayments={2}
+          successfulPayments={2}
+          failedPayments={0}
+          scoreHistory={[
+            { timestamp: 1, score: 500 },
+            { timestamp: 2, score: 520 },
+          ]}
+        />
+      );
+
+      expect(screen.getByTestId('score-history-line')).toBeInTheDocument();
+      expect(container.querySelector('polyline')).not.toBeNull();
+      expect(screen.queryByText(SINGLE_POINT_COPY)).not.toBeInTheDocument();
+    });
   });
 });

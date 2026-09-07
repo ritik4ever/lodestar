@@ -1,0 +1,154 @@
+name: Load Test — Read-Heavy Routes
+
+on:
+  schedule:
+    # Weekly on Mondays at 04:00 UTC — results published as artefact for baseline diff
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      baseUrl:
+        description: 'Override BASE_URL (default: local stub http://localhost:3456)'
+        required: false
+        default: ''
+      connections:
+        description: 'Connections for single-shot run (empty = sweep 10→50→100)'
+        required: false
+        default: ''
+      duration:
+        description: 'Duration seconds for single-shot run'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  autocannon:
+    name: autocannon (stub) — read-heavy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install --no-audit --no-fund
+
+      - name: Start stub server
+        working-directory: backend
+        run: |
+          nohup node load-tests/stub-server.js > /tmp/stub.log 2>&1 &
+          echo $! > /tmp/stub.pid
+          for i in 1 2 3 4 5; do
+            if curl -sf http://localhost:3456/api/services > /dev/null; then
+              echo "stub ready"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:3456/api/services | head -c 120; echo
+
+      - name: Run autocannon sweep (or single-shot if inputs given)
+        working-directory: backend
+        env:
+          BASE_URL: ${{ inputs.baseUrl || 'http://localhost:3456' }}
+        run: |
+          set -e
+          if [ -n "${{ inputs.connections }}" ]; then
+            node load-tests/run-autocannon.js --connections "${{ inputs.connections }}" --duration "${{ inputs.duration || '20' }}" | tee /tmp/load-output.txt
+          else
+            node load-tests/run-autocannon.js | tee /tmp/load-output.txt
+          fi
+          # Extract the final JSON summary block (between --- JSON summary --- and end)
+          # run-autocannon always prints a JSON object as its last block, so capture it
+          awk '/--- JSON summary/{flag=1; next} flag' /tmp/load-output.txt > /tmp/autocannon-summary.json || true
+          # Fallback: if extraction failed, dump the whole log as artefact
+          if [ ! -s /tmp/autocannon-summary.json ]; then
+            cp /tmp/load-output.txt /tmp/autocannon-summary.json
+          fi
+          cat /tmp/autocannon-summary.json
+
+      - name: Upload autocannon results artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results-autocannon-${{ github.run_number }}
+          path: |
+            /tmp/autocannon-summary.json
+            /tmp/load-output.txt
+          retention-days: 30
+
+      - name: Stop stub server
+        if: always()
+        run: |
+          kill "$(cat /tmp/stub.pid)" 2>/dev/null || true
+          cat /tmp/stub.log || true
+
+  k6:
+    name: k6 (stub) — read-heavy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # k6 is optional — if the image or URL is unreachable we still pass via autocannon above
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install --no-audit --no-fund
+
+      - name: Start stub server
+        working-directory: backend
+        run: |
+          nohup node load-tests/stub-server.js > /tmp/stub-k6.log 2>&1 &
+          echo $! > /tmp/stub-k6.pid
+          for i in 1 2 3 4 5; do
+            if curl -sf http://localhost:3456/api/services > /dev/null; then
+              echo "stub ready for k6"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 scenario
+        working-directory: backend
+        env:
+          BASE_URL: http://localhost:3456
+        run: |
+          k6 run load-tests/read-heavy.k6.js --out json=/tmp/k6-raw.json | tee /tmp/k6-output.txt
+          # handleSummary prints a JSON summary to stdout — capture it
+          # also keep the raw json output for detailed analysis
+          echo "k6 run complete"
+          cat /tmp/k6-output.txt | tail -n 100
+
+      - name: Upload k6 results artefact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results-k6-${{ github.run_number }}
+          path: |
+            /tmp/k6-raw.json
+            /tmp/k6-output.txt
+          retention-days: 30
+
+      - name: Stop stub server
+        if: always()
+        run: |
+          kill "$(cat /tmp/stub-k6.pid)" 2>/dev/null || true
+          cat /tmp/stub-k6.log || true
