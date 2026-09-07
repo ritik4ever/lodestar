@@ -4,6 +4,8 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
+pub use lodestar_types::ServiceEntry;
+
 const MAX_TTL: u32 = 3110400;
 
 // Minimum number of ledgers that must elapse before the same agent may vote on
@@ -29,22 +31,6 @@ fn canonicalize_category(env: &Env, category: &String) -> Option<String> {
         }
     }
     None
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct ServiceEntry {
-    pub id: u64,
-    pub name: String,
-    pub description: String,
-    pub endpoint: String,
-    pub price_usdc: String,
-    pub pay_to: String,
-    pub category: String,
-    pub provider: Address,
-    pub reputation: i32,
-    pub active: bool,
-    pub registered_at: u64,
 }
 
 #[contracttype]

@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { version = "22.0.0", features = ["alloc"] }
+lodestar-types = { path = "../lodestar-types" }
 
 # Lets a dependent crate (the registry integration tests) pull in the test
 # utilities needed to register this contract in a test Env.
@@ -17,8 +18,9 @@ testutils = ["soroban-sdk/testutils"]
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils", "alloc"] }
+lodestar-registry = { path = ".." }
 
-[profile.release]
+profile.release]
 opt-level = "z"
 overflow-checks = true
 debug = 0

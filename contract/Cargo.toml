@@ -5,12 +5,12 @@ edition = "2021"
 publish = false
 license = "Apache-2.0"
 
-
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { version = "22.0.0", features = ["alloc"] }
+lodestar-types = { path = "../lodestar-types" }
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils", "alloc"] }
